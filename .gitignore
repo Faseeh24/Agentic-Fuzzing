@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Harness build artifacts
+harness/*.exe
+harness/*.o
+harness/*.d
+harness/mxml_harness
+target/mxml/*.o
+target/mxml/*.d

@@ -7,7 +7,7 @@ This document compares the **ANTLR reference XML grammar** (from `antlr/grammars
 **Source references:**
 - **ANTLR grammar source:** https://github.com/antlr/grammars-v4/tree/master/xml (`XMLLexer.g4`, `XMLParser.g4`, BSD license, Terence Parr 2013)
 - **mxml source:** https://github.com/michaelrsweet/mxml — vendored at commit `e6824d899d949387fb0156af6f4101373b9be519`
-- **Support documentation:** http://pldb.info/concepts/xml (referenced in the grammar's own readme; currently unreachable)
+- **Support documentation:** http://pldb.info/concepts/xml (referenced in the grammar's own readme)
 
 The original grammar files are verbatim copies from the ANTLR upstream and live in `grammar/original/`.
 

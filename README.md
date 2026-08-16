@@ -40,7 +40,8 @@ Agentic-Fuzzing/
 │   └── mxml/                   # Mini-XML at pinned commit
 ├── harness/                    # C harness for feeding inputs to mxml
 │   ├── mxml_harness.c
-│   └── Makefile
+│   ├── Makefile
+│   └── sample_tests/           # Sample XML inputs for harness validation
 ├── fuzzer/                     # Hypothesis-based XML fuzzer
 ├── agent/                      # Agentic orchestration layer
 ├── tests/                      # Test suites
@@ -94,14 +95,47 @@ between the ANTLR grammar and mxml's actual accepted XML dialect.
 
 ## Building the Harness
 
+Build and test the harness with a single Docker command:
+
 ```bash
-cd harness
-make
+docker compose up
 ```
 
-The harness compiles `mxml_harness.c` against the vendored mxml library and produces
-an executable that reads an XML file from a path argument and reports `ACCEPT` or
-`REJECT`.
+Or build only:
+
+```bash
+docker compose run --rm harness make -C harness all
+```
+
+Run sample tests only:
+
+```bash
+docker compose run --rm harness make -C harness test
+```
+
+The harness compiles `mxml_harness.c` against the vendored mxml library with
+`-fsanitize=address,undefined` inside a Debian container.
+
+### Running the Harness
+
+```bash
+docker compose run --rm harness /src/harness/mxml_harness input.xml
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Valid parse — mxml accepted the XML |
+| `1`  | Well-formed rejection — mxml rejected the input (parse error) |
+| `2`  | Harness error — cannot read input file or I/O failure |
+
+### Sample Tests
+
+```bash
+# Run the built-in sample test suite
+docker compose run --rm harness make -C harness test
+```
 
 ---
 
