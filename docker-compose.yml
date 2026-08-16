@@ -22,4 +22,4 @@ services:
     volumes:
       - .:/src
     working_dir: /src
-    command: ["make", "-C", "harness", "all", "test"]
+    command: ["sh", "-c", "make -C /src/harness all test && make -C /src/harness test-wrapper && PYTHONPATH=/src python3 -m fuzzer.baseline_strategy"]

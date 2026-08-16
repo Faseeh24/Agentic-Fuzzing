@@ -3,6 +3,16 @@
 // Reads XML from file (argv[1]) or stdin, parses with mxmlLoadString,
 // exits 0=valid parse, 1=well-formed rejection, 2=harness error.
 //
+// Exit code contract (C harness):
+//   0  — valid parse          : mxml accepted the XML
+//   1  — well-formed rejection: mxml rejected the input (parse error)
+//   2  — harness error        : cannot read input file or I/O failure
+//
+// Exit codes 3-5 are added by the Python wrapper (fuzzer/run_harness.py):
+//   3  — sanitizer crash      : ASan or UBSan detected a violation
+//   4  — timeout              : input exceeded 5-second limit
+//   5  — bug crash            : unexpected crash (segfault, abort, etc.)
+//
 
 #include <stdio.h>
 #include <stdlib.h>

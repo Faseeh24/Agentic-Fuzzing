@@ -2,18 +2,17 @@
 # Makefile for mxml harness driver.
 # Builds with ASan+UBSan for memory-safety/UB detection.
 #
-# Build (Docker — recommended on Windows):
-#   docker build -t mxml-harness ..
-#   docker run --rm -v "$(pwd)":/src/harness mxml-harness make -C harness
+# Build:
+#   docker compose run --rm harness make -C harness
 #
-# Build (native Linux / WSL / MSYS2 with sanitizer packages):
-#   make
+# Run sample tests (C harness only):
+#   docker compose run --rm harness make -C harness test
 #
-# Run sample tests:
-#   make test
+# Run Python wrapper tests:
+#   docker compose run --rm harness make -C harness test-wrapper
 #
 # Clean build artifacts:
-#   make clean
+#   docker compose run --rm harness make -C harness clean
 #
 
 CC      = gcc
@@ -76,7 +75,11 @@ test-missing-file: $(BINARY)
 	    exit 1; \
 	fi
 
+test-wrapper: $(BINARY)
+	@echo "Testing Python wrapper classification..."
+	@cd /src/fuzzer && PYTHONPATH=/src/fuzzer python3 /src/fuzzer/test_wrapper.py
+
 clean:
 	rm -f $(BINARY) *.o $(MXML_OBJS)
 
-.PHONY: all test test-missing-file clean
+.PHONY: all test test-missing-file test-wrapper clean

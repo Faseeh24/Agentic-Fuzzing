@@ -43,6 +43,9 @@ Agentic-Fuzzing/
 │   ├── Makefile
 │   └── sample_tests/           # Sample XML inputs for harness validation
 ├── fuzzer/                     # Hypothesis-based XML fuzzer
+│   ├── baseline_strategy.py    # Baseline strategy (proves pipeline works)
+│   ├── run_harness.py          # Python wrapper around C harness (timeout + sanitizer detection)
+│   └── test_wrapper.py         # Wrapper classification tests
 ├── agent/                      # Agentic orchestration layer
 ├── tests/                      # Test suites
 ├── baseline/                   # Baseline fuzzing runs
@@ -129,24 +132,79 @@ docker compose run --rm harness /src/harness/mxml_harness input.xml
 | `0`  | Valid parse — mxml accepted the XML |
 | `1`  | Well-formed rejection — mxml rejected the input (parse error) |
 | `2`  | Harness error — cannot read input file or I/O failure |
+| `3`  | Sanitizer crash — ASan or UBSan detected a memory/UB violation |
+| `4`  | Timeout — input exceeded the 5-second limit |
+| `5`  | Bug crash — unexpected crash (segfault, abort, etc.) |
+
+Codes 0–2 are emitted directly by the C harness. Codes 3–5 are added by
+the Python wrapper in `fuzzer/run_harness.py` (timeout enforcement and
+sanitizer-output detection).
 
 ### Sample Tests
 
 ```bash
-# Run the built-in sample test suite
+# C harness sample tests
 docker compose run --rm harness make -C harness test
+
+# Python wrapper classification tests
+docker compose run --rm harness make -C harness test-wrapper
+
+# Baseline fuzzer strategy (proves pipeline plumbing works)
+docker compose run --rm harness python3 -m fuzzer.baseline_strategy
 ```
+
+### Baseline Strategy
+
+`fuzzer/baseline_strategy.py` runs a fixed set of known-valid and known-invalid
+XML inputs through the harness and verifies each classification is correct.
+It does **not** attempt to find bugs — it only confirms the pipeline is wired
+up properly.
+
+```bash
+# Run baseline strategy (Docker)
+docker compose run --rm harness python3 -m fuzzer.baseline_strategy
+
+# Run baseline strategy (native)
+PYTHONPATH=fuzzer python3 -m fuzzer.baseline_strategy
+```
+
+### Fuzzer Architecture
+
+```
+fuzzer/
+├── run_harness.py       # Python wrapper: runs C harness, detects timeout/sanitizer/bug crashes
+├── baseline_strategy.py # Baseline: fixed corpus to verify pipeline plumbing
+├── strategies/          # (future) Hypothesis-based XML generation strategies
+├── agentic_loop.py      # (future) Agentic orchestration loop
+└── llm_client.py        # (future) LLM integration for adaptive fuzzing
+```
+
+**Exit code contract** (0–5):
+
+| Code | Meaning | Source |
+|------|---------|--------|
+| `0`  | Valid parse — mxml accepted the XML | C harness |
+| `1`  | Well-formed rejection — mxml rejected the input | C harness |
+| `2`  | Harness error — cannot read input or I/O failure | C harness |
+| `3`  | Sanitizer crash — ASan/UBSan detected a violation | Python wrapper |
+| `4`  | Timeout — input exceeded 5-second limit | Python wrapper |
+| `5`  | Bug crash — unexpected crash (segfault, abort, etc.) | Python wrapper |
 
 ---
 
 ## Running the Fuzzer
 
 ```bash
-python -m fuzzer
+# Docker (recommended)
+docker compose run --rm harness python3 -m fuzzer.baseline_strategy
+
+# Native (Windows/Linux)
+cd fuzzer
+PYTHONPATH=. python3 -m fuzzer.baseline_strategy
 ```
 
-(Additional run commands and configuration options will be documented as the fuzzer
-is implemented.)
+(Advanced fuzzer strategies using Hypothesis and LLM-driven generation will be
+documented as they are implemented.)
 
 ---
 
