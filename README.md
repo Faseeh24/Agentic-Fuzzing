@@ -1,29 +1,21 @@
-# Agentic-Fuzzing
+# Agentic Fuzzing of Mini-XML (mxml)
 
 Fuzzing the [Mini-XML (mxml)](https://github.com/michaelrsweet/mxml) C library using
-ANTLR-generated grammars and [Hypothesis](https://hypothesis.works/) property-based testing.
+ANTLR-generated grammars, [Hypothesis](https://hypothesis.works/) property-based testing,
+and an LLM-driven agentic loop with crash triage.
 
 ---
 
 ## Overview
 
-This project performs agentic fuzzing of the mxml XML parsing library. An ANTLR XML grammar
-(from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)) drives a Hypothesis-based
-fuzzer to generate valid and invalid XML inputs against a vendored mxml binary.
+This project implements a complete agentic fuzzing pipeline (Steps 4–6 of the assignment):
 
-The approach:
-
-1. **Grammar source** — The reference ANTLR XML grammar defines the syntactic surface of
-   XML that the fuzzer generates from.
-2. **Target** — A pinned version of mxml (Mini-XML) is vendored under `target/mxml/` as the
-   fuzzing target.
-3. **Comparison** — `grammar/ADAPTATIONS.md` (source-verified) is loaded into the LLM as
-   reference material; `grammar/README.md` is the human-readable version of the same content.
-   and mxml's actual accepted dialect, so the generator only emits inputs mxml can parse.
-4. **Harness** — `harness/mxml_harness.c` is a minimal C harness that loads XML from a file
-   and reports whether mxml accepts or rejects it.
-5. **Fuzzer** — The Hypothesis-driven fuzzer in `fuzzer/` uses strategies derived from the
-   grammar to generate XML corpus entries, feeding them through the harness.
+1. **Grammar source** — ANTLR4 XML grammar from [antlr/grammars-v4](https://github.com/antlr/grammars-v4) drives structural generation.
+2. **Adaptations** — `grammar/ADAPTATIONS.md` (source-verified) maps the grammar onto mxml's actual accepted dialect, so the generator only emits inputs mxml can parse.
+3. **Harness** — `harness/mxml_harness.c` loads XML via `mxmlLoadString()` with ASan + UBSan.
+4. **Agentic loop** — `fuzzer/agentic_loop.py` iteratively generates and refines Hypothesis strategies using an LLM.
+5. **Crash triage** — `triage/` deduplicates, minimizes, and verifies crash reproducers.
+6. **Report** — `report/` produces the written design/findings/challenges report.
 
 ---
 
@@ -31,32 +23,44 @@ The approach:
 
 ```
 Agentic-Fuzzing/
-├── grammar/                    # ANTLR grammar sources and comparison docs
-│   ├── README.md               # Human-readable grammar comparison docs
-│   ├── ADAPTATIONS.md          # LLM-facing grammar↔mxml comparison (reference material)
-│   ├── original/               # Verbatim ANTLR reference XML grammar
+├── grammar/                          # ANTLR grammar sources and comparison docs
+│   ├── README.md                     # Human-readable grammar comparison
+│   ├── ADAPTATIONS.md                # LLM-facing grammar↔mxml comparison (reference)
+│   ├── original/                     # Verbatim ANTLR reference XML grammar
 │   │   ├── XMLLexer.g4
 │   │   └── XMLParser.g4
-│   └── adapted/                # (future) mxml-adapted grammar variants
-├── target/                     # Vendored target library
-│   └── mxml/                   # Mini-XML at pinned commit
-├── harness/                    # C harness for feeding inputs to mxml
+│   └── adapted/                      # (future) mxml-adapted grammar variants
+├── target/                           # Vendored target library
+│   └── mxml/                         # Mini-XML at pinned commit e6824d8
+├── harness/                          # C harness for feeding inputs to mxml
 │   ├── mxml_harness.c
 │   ├── Makefile
-│   └── sample_tests/           # Sample XML inputs for harness validation
-├── fuzzer/                     # Hypothesis-based XML fuzzer
-│   ├── baseline_strategy.py    # Baseline strategy (proves pipeline works)
-│   ├── run_harness.py          # Python wrapper around C harness (timeout + sanitizer detection)
-│   └── test_wrapper.py         # Wrapper classification tests
-├── agent/                      # Agentic orchestration layer
-├── tests/                      # Test suites
-├── baseline/                   # Baseline fuzzing runs
-├── runs/                       # Fuzzing run artifacts
-├── crashes/                    # Crash inputs collected during fuzzing
-├── reports/                    # Fuzzing reports and statistics
-├── scripts/                    # Utility and automation scripts
-├── requirements.txt            # Python dependencies
-└── README.md                   # This file
+│   └── sample_tests/                 # Sample XML inputs for harness validation
+├── fuzzer/                           # Hypothesis-based XML fuzzer
+│   ├── baseline_strategy.py          # Baseline: fixed corpus to verify pipeline
+│   ├── run_harness.py                # Python wrapper: timeout + sanitizer detection
+│   ├── test_wrapper.py               # Wrapper classification tests
+│   ├── agentic_loop.py               # LLM-driven agentic fuzzing loop
+│   ├── llm_client.py                 # Multi-provider LLM client (OpenRouter/Groq/Gemini)
+│   ├── strategies/                   # Generated Hypothesis strategies
+│   ├── logs/                         # JSONL iteration logs + loop_summary.md
+│   └── prompts/                      # LLM prompt templates
+│       ├── seed_prompt.md
+│       └── refine_prompt.md
+├── triage/                           # Crash triage pipeline
+│   ├── dedupe.py                     # Signature extraction and deduplication
+│   ├── minimize.py                   # Hypothesis-based input minimization
+│   ├── verify.py                     # Deterministic reproduction verification
+│   └── run.py                        # Main triage entry point
+├── report/                           # Written report generation
+│   ├── generate.py                   # Report generator
+│   ├── report.md                     # Generated two-page written report
+│   └── triage_report.md              # Generated crash triage report
+├── .env.example                      # API key placeholders
+├── Dockerfile                        # Debian trixie-slim with sanitizers + Python deps
+├── docker-compose.yml                # Full pipeline orchestration
+├── requirements.txt                  # Python dependencies
+└── README.md                         # This file
 ```
 
 ---
@@ -82,25 +86,9 @@ cd ..
 
 ---
 
-## Grammar Source
-
-| Property         | Value                                                          |
-|------------------|----------------------------------------------------------------|
-| Repository       | [antlr/grammars-v4](https://github.com/antlr/grammars-v4)      |
-| Path             | `xml/`                                                         |
-| Files            | `XMLLexer.g4`, `XMLParser.g4`                                  |
-| License          | BSD (Terence Parr, 2013)                                       |
-| ANTLR Version    | 4                                                              |
-
-The original grammar files are copied verbatim into `grammar/original/` to ensure
-reproducibility. See `grammar/README.md` for the full feature-by-feature comparison
-between the ANTLR grammar and mxml's actual accepted XML dialect.
-
----
-
 ## Building the Harness
 
-Build and test the harness with a single Docker command:
+Build and test the full pipeline with a single Docker command:
 
 ```bash
 docker compose up
@@ -155,26 +143,13 @@ docker compose run --rm harness make -C harness test-wrapper
 docker compose run --rm harness python3 -m fuzzer.baseline_strategy
 ```
 
-### Baseline Strategy
-
-`fuzzer/baseline_strategy.py` runs a fixed set of known-valid and known-invalid
-XML inputs through the harness and verifies each classification is correct.
-It does **not** attempt to find bugs — it only confirms the pipeline is wired
-up properly.
-
-```bash
-# Run baseline strategy (Docker)
-docker compose run --rm harness python3 -m fuzzer.baseline_strategy
-
-# Run baseline strategy (native)
-PYTHONPATH=fuzzer python3 -m fuzzer.baseline_strategy
-```
+---
 
 ## Fuzzer Architecture
 
 ```
 fuzzer/
-├── run_harness.py          # Python wrapper: runs C harness, detects timeout/sanitizer/bug crashes
+├── run_harness.py          # Python wrapper: runs C harness, detects timeout/sanitizer/bug
 ├── baseline_strategy.py    # Baseline: fixed corpus to verify pipeline plumbing
 ├── agentic_loop.py         # LLM-driven agentic fuzzing loop
 ├── llm_client.py           # Multi-provider LLM client (OpenRouter / Groq / Gemini)
@@ -203,7 +178,7 @@ Hypothesis XML strategy using an LLM. Each iteration:
 
 1. **Generate / refine strategy** — the LLM produces (or revises) a Python module
    exporting `xml_strategy`, based on the ANTLR grammar and mxml-specific
-   adaptation notes from `grammar/README.md`.
+   adaptation notes from `grammar/ADAPTATIONS.md`.
 2. **Execute** — the strategy is run against the C harness via `run_harness.py`,
    collecting exit-code statistics over a configurable number of examples.
 3. **Signal extraction** — proxy signals are computed:
@@ -213,8 +188,9 @@ Hypothesis XML strategy using an LLM. Each iteration:
 4. **Log** — every iteration is appended to `fuzzer/logs/iteration_N.jsonl`
    and a markdown summary is written to `fuzzer/logs/loop_summary.md`.
 5. **Decide** — the loop stops when a crash is found, convergence is reached,
-   or the max-iteration budget is exhausted. The refine prompt steers the next
-   strategy toward unexplored grammar productions and crash-adjacent inputs.
+   or the max-iteration budget is exhausted.
+6. **Triage** — any crashes are passed to `triage/` for deduplication, minimization,
+   and verification.
 
 ### Proxy Signals
 
@@ -223,6 +199,19 @@ Hypothesis XML strategy using an LLM. Each iteration:
 | Acceptance rate | `valid / total` | Low rate → LLM tightens well-formed cases |
 | Grammar coverage | Regex detection of production tokens in corpus | Missing productions → LLM adds coverage |
 | Crash signatures | Distinct code-3/4/5 examples | Existing crashes → LLM generates near-miss variants |
+
+### Strategy Design
+
+The LLM-generated strategies use `@st.composite` for recursive productions
+rather than flattening the grammar. Key structural elements:
+
+- **`st.recursive`** for nested element/content structures
+- **Dedicated sub-strategies** for the three highest-value deliberate breaks:
+  1. Mismatched close tags (`<a><b></a></b>`)
+  2. Duplicate attribute names (`<a x="1" x="2"/>`)
+  3. Second top-level root element (`<a/><b/>`)
+- **Verified constraints** from `ADAPTATIONS.md`: only 5 entity names,
+  no control chars, proper UTF-8/BOM handling, real comment/CDATA terminators.
 
 ### Configuration
 
@@ -247,17 +236,22 @@ Supported providers (auto-fallback in order: OpenRouter → Groq → Gemini):
 # Docker (recommended — harness must be built first)
 docker compose run --rm harness \
     PYTHONPATH=/src python3 -m fuzzer.agentic_loop \
-    --max-iterations 10 --num-examples 200
+    --max-iterations 5 --num-examples 200
 
 # Native (Windows / Linux, requires Python + hypothesis + httpx)
-python -m fuzzer.agentic_loop --max-iterations 10
+python -m fuzzer.agentic_loop --max-iterations 5
+
+# With a seed strategy
+python -m fuzzer.agentic_loop --seed-strategy fuzzer/strategies/iteration_0000.py
+
+# Skip triage (loop only)
+python -m fuzzer.agentic_loop --no-triage
 ```
 
-Optional: seed the loop with an existing strategy:
-
-```bash
-python -m fuzzer.agentic_loop --seed-strategy strategies/iteration_0000.py
-```
+**Constraints enforced:**
+- Maximum 500 examples per iteration, 10-minute wall-clock backstop
+- Maximum 5 agentic loop iterations (~$5 LLM spend)
+- 5-second timeout per input (timeouts count as crashes)
 
 ### Artifacts
 
@@ -265,31 +259,110 @@ python -m fuzzer.agentic_loop --seed-strategy strategies/iteration_0000.py
 |------|---------|
 | `fuzzer/strategies/iteration_N[_refined].py` | Generated Hypothesis strategy modules |
 | `fuzzer/logs/iteration_N.jsonl` | Per-iteration JSONL log (strategy, results, coverage, signatures) |
-| `fuzzer/logs/loop_summary.md` | Markdown summary of the full run |
+| `fuzzer/logs/loop_summary.md` | Markdown summary of the full loop run |
 
 ---
 
-## Running the Fuzzer
+## Crash Triage (Step 5)
+
+After the agentic loop, `triage/` processes all crash candidates:
+
+### Pipeline
+
+1. **Detect** — collect all code-3/4/5 examples from iteration logs.
+2. **Deduplicate** — normalize ASan/UBSan stack traces and hash signatures.
+3. **Save** — each unique signature gets a directory under `triage/crashes/{sig}/`:
+   - `reproducer.xml` — the original crashing input
+   - `sanitizer_report.txt` — full stderr output
+   - `meta.json` — signal type and exit code
+4. **Minimize** — wrap each reproducer in a Hypothesis `@given` test with a
+   structured sub-document strategy; the shrinker converges on the smallest
+   input that still triggers the same signature.
+5. **Verify** — re-run each minimized reproducer 3 times to confirm deterministic
+   reproduction.
+
+### Normalization Choices (documented for the report)
+
+| Choice | Value | Rationale |
+|--------|-------|-----------|
+| Stripped frames | `__interceptor_malloc`, `__interceptor_free`, `malloc`, `free`, `__libc_start_main`, `_start` | Allocator/runtime boilerplate present in every crash |
+| Top N frames hashed | 5 | Too few over-merges distinct bugs sharing an allocator entry; too many under-merges due to ASLR/inlining noise |
+| Bare timeout signature | `timeout\|struct=<structural_hash>` | Groups timeouts by input shape (length bucket, nesting depth, entity presence) rather than treating each as unique |
+
+### Running Triage
 
 ```bash
-# Docker (recommended)
-docker compose run --rm harness python3 -m fuzzer.baseline_strategy
+# Docker
+docker compose run --rm harness python3 -m triage.run
 
-# Native (Windows/Linux)
-cd fuzzer
-PYTHONPATH=. python3 -m fuzzer.baseline_strategy
+# Native
+python -m triage.run
+
+# With a custom crash directory
+python -m triage.run --crash-dir /path/to/crashes
 ```
 
-(Advanced fuzzer strategies using Hypothesis and LLM-driven generation will be
-documented as they are implemented.)
+### Triage Artifacts
+
+| Path | Content |
+|------|---------|
+| `triage/crashes/{signature}/reproducer.xml` | Original crashing input |
+| `triage/crashes/{signature}/reproducer_minimized.xml` | Hypothesis-shrunk reproducer |
+| `triage/crashes/{signature}/sanitizer_report.txt` | Full ASan/UBSan stderr |
+| `triage/crashes/{signature}/meta.json` | Signal type, exit code, timeout flag |
+| `report/triage_report.md` | Generated triage report with all crash details |
+
+---
+
+## Report (Step 6)
+
+The written report is generated from all artifacts:
+
+```bash
+# Docker
+docker compose run --rm harness python3 -m report.generate
+
+# Native
+python -m report.generate
+```
+
+Output files:
+- **`report/report.md`** — Two-page written report (design, findings, challenges)
+- **`report/triage_report.md`** — Detailed crash report with reproducer excerpts
+
+The report covers:
+- **Design**: grammar source, adaptations, harness classification, agentic loop
+  structure, proxy signal choice, triage methodology
+- **Findings**: crash counts, strategy evolution across iterations,
+  under-tested grammar regions
+- **Challenges**: hypothesis composite wrapping, deduplication choices,
+  timeout-as-crash policy, generator correction
+
+---
+
+## Full Pipeline
+
+Run everything end-to-end:
+
+```bash
+docker compose up
+```
+
+This executes:
+1. `make -C harness all test` — build and test the C harness
+2. `make -C harness test-wrapper` — run Python wrapper classification tests
+3. `python3 -m fuzzer.baseline_strategy` — verify pipeline plumbing
+4. `python3 -m fuzzer.agentic_loop --max-iterations 3 --num-examples 50` —
+   run the agentic fuzzing loop (3 iterations for the demo)
+5. `python3 -m triage.run` — triage any crashes found
 
 ---
 
 ## Grammar Comparison
 
 See [`grammar/ADAPTATIONS.md`](grammar/ADAPTATIONS.md) for the source-verified comparison
-   used as LLM reference material; [`grammar/README.md`](grammar/README.md) is the
-   human-readable documentation version.
+used as LLM reference material; [`grammar/README.md`](grammar/README.md) is the
+human-readable documentation version.
 
 - Feature-by-feature comparison table (ANTLR grammar vs mxml)
 - Generator constraints for safe Hypothesis strategies

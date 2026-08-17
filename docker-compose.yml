@@ -1,7 +1,7 @@
 #
-# docker-compose.yml — build and test the mxml harness with ASan + UBSan.
+# docker-compose.yml — build, test, fuzz, and triage the mxml harness.
 #
-# Build + run sample tests:
+# Build + run sample tests + baseline + agentic loop + triage:
 #   docker compose up
 #
 # Build only:
@@ -9,6 +9,15 @@
 #
 # Run tests only:
 #   docker compose run --rm harness make -C harness test
+#
+# Run baseline strategy:
+#   docker compose run --rm harness python3 -m fuzzer.baseline_strategy
+#
+# Run agentic loop only:
+#   docker compose run --rm harness python3 -m fuzzer.agentic_loop
+#
+# Run triage only (after a loop run):
+#   docker compose run --rm harness python3 -m triage.run
 #
 # Clean build artifacts:
 #   docker compose run --rm harness make -C harness clean
@@ -22,4 +31,4 @@ services:
     volumes:
       - .:/src
     working_dir: /src
-    command: ["sh", "-c", "make -C /src/harness all test && make -C /src/harness test-wrapper && PYTHONPATH=/src python3 -m fuzzer.baseline_strategy && echo '' && echo '=== Agentic loop (seed) ===' && PYTHONPATH=/src python3 -m fuzzer.agentic_loop --max-iterations 3 --num-examples 50 || echo '(agentic loop skipped: set API keys in .env to enable)'"]
+    command: ["sh", "-c", "make -C /src/harness all test && make -C /src/harness test-wrapper && PYTHONPATH=/src python3 -m fuzzer.baseline_strategy && echo '' && echo '=== Agentic loop (seed, 3 iters) ===' && PYTHONPATH=/src python3 -m fuzzer.agentic_loop --max-iterations 3 --num-examples 50 && echo '' && echo '=== Crash triage ===' && PYTHONPATH=/src python3 -m triage.run || echo '(agentic loop / triage skipped: set API keys in .env to enable)']"]

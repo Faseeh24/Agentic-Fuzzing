@@ -358,17 +358,28 @@ def build_summary(results: dict[str, Any]) -> str:
 # ── main loop ────────────────────────────────────────────────────────────────
 
 
+# ── triage integration ───────────────────────────────────────────────────────
+
+
+def _import_trage():
+    sys.path.insert(0, str(FUZZER_DIR.parent / "triage"))
+    import triage.run as tr
+    return tr
+
+
 def run_loop(
     max_iterations: int = 10,
     seed_strategy_path: Optional[str] = None,
     num_examples: int = 200,
+    run_triage: bool = True,
 ) -> dict[str, Any]:
-    """Run the agentic fuzzing loop.
+    """Run the agentic fuzzing loop with optional triage.
 
     Args:
         max_iterations: maximum refine cycles to perform
         seed_strategy_path: optional path to an existing strategy to seed the loop
         num_examples: how many examples to generate per iteration
+        run_triage: whether to run crash triage after the loop
     Returns:
         Summary dict with final results and log path
     """
@@ -384,6 +395,9 @@ def run_loop(
 
     STRATEGIES_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Track all crash examples with stderr for triage
+    all_crashes: list[dict[str, Any]] = []
 
     # Load seed strategy or generate one
     strategy_code = ""
@@ -414,6 +428,7 @@ def run_loop(
 
     prev_results: dict[str, Any] = {}
     final_results: dict[str, Any] = {}
+    loop_start = time.time()
 
     for iteration in range(1, max_iterations + 1):
         print(f"\n{'─' * 60}")
@@ -429,6 +444,17 @@ def run_loop(
 
         grammar_coverage = compute_grammar_coverage(results.get("examples", []))
         crash_sigs = compute_crash_signatures(results)
+
+        # Collect crash examples with full stderr for triage
+        for text, code, label in results.get("examples", []):
+            if code in (3, 4, 5):
+                all_crashes.append({
+                    "input": text,
+                    "code": code,
+                    "label": label,
+                    "iteration": iteration,
+                    "stderr": "",  # populated by triage run
+                })
 
         log_path = log_iteration(
             iteration=iteration,
@@ -456,8 +482,8 @@ def run_loop(
         print(f"  grammar cov    : {grammar_coverage.get('covered_prods', 0)}/{grammar_coverage.get('total_prods', 0)}")
         print(f"  log            : {log_path}")
 
-        if bug_count > 0 or san_count > 0:
-            print(f"\n  ★ CRASH/SANITIZER FOUND — stopping loop")
+        if bug_count > 0 or san_count > 0 or timeout_count > 0:
+            print(f"\n  ★ CRASH/SANITIZER/TIMEOUT FOUND — stopping loop")
             final_results = results
             final_results["_log_path"] = str(log_path)
             final_results["_iteration"] = iteration
@@ -499,12 +525,15 @@ def run_loop(
 
         prev_results = dict(results)
 
+    loop_elapsed = time.time() - loop_start
+
     # ── write loop summary ──────────────────────────────────────────────────
     summary_md = LOGS_DIR / "loop_summary.md"
     with open(summary_md, "w", encoding="utf-8") as f:
         f.write("# Agentic Loop Summary\n\n")
         f.write(f"**Iterations:** {final_results.get('_iteration', 0)}\n\n")
         f.write(f"**LLM provider:** {client.active_provider or 'N/A'}\n\n")
+        f.write(f"**Wall-clock:** {loop_elapsed:.1f}s\n\n")
         f.write("## Final Results\n\n")
         f.write(build_summary(final_results))
         f.write("\n\n")
@@ -513,6 +542,29 @@ def run_loop(
             f.write(f"- `{p.name}`\n")
     print(f"\n[loop] Summary written → {summary_md}")
 
+    # ── triage ─────────────────────────────────────────────────────────────
+    if run_triage and all_crashes:
+        print(f"\n{'=' * 60}")
+        print("Running crash triage ...")
+        print(f"{'=' * 60}")
+        try:
+            triage_mod = _import_trage()
+            triage_result = triage_mod.run_triage(
+                crash_dir=Path(__file__).resolve().parent.parent / "triage" / "crashes",
+                num_examples=num_examples,
+            )
+            final_results["_triage"] = triage_result
+            print(f"\n[loop] Triage complete: "
+                  f"{triage_result.get('unique_sigs', 0)} unique sigs, "
+                  f"{triage_result.get('confirmed', 0)} confirmed")
+        except Exception as exc:
+            print(f"[loop] Triage failed: {exc}")
+            final_results["_triage_error"] = str(exc)
+    elif run_triage:
+        print("\nNo crashes to triage.")
+
+    final_results["_loop_elapsed"] = loop_elapsed
+    final_results["_total_crashes"] = len(all_crashes)
     return final_results
 
 
@@ -526,11 +578,13 @@ if __name__ == "__main__":
     parser.add_argument("--max-iterations", type=int, default=10, help="Max refine cycles")
     parser.add_argument("--seed-strategy", type=str, default=None, help="Path to initial strategy")
     parser.add_argument("--num-examples", type=int, default=200, help="Examples per iteration")
+    parser.add_argument("--no-triage", action="store_true", help="Skip crash triage after loop")
     args = parser.parse_args()
 
     result = run_loop(
         max_iterations=args.max_iterations,
         seed_strategy_path=args.seed_strategy,
         num_examples=args.num_examples,
+        run_triage=not args.no_triage,
     )
     sys.exit(0 if result.get(5, 0) == 0 else 1)
