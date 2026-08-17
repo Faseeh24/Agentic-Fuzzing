@@ -584,8 +584,16 @@ def run_loop(
                 timeout=120.0,
             )
         except Exception as exc:
-            print(f"[loop] LLM seed call failed: {exc}")
-            return {"error": str(exc), "iteration": 0}
+            err_str = str(exc)
+            if "RATE-LIMITED" in err_str or "quota" in err_str.lower() or "429" in err_str:
+                print(f"[loop] LLM seed call FAILED — rate-limit/quota hit:")
+                for line in err_str.splitlines():
+                    print(f"  {line}")
+                print("[loop] No LLM available; skipping agentic loop.")
+                print("[loop] (Set OPENROUTER_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY in .env to enable)")
+            else:
+                print(f"[loop] LLM seed call failed: {exc}")
+            return {"error": err_str, "iteration": 0, "_llm_unavailable": True}
 
         # Save seed strategy
         seed_path = STRATEGIES_DIR / "iteration_0000.py"
@@ -699,7 +707,14 @@ def run_loop(
                 timeout=120.0,
             )
         except Exception as exc:
-            print(f"  [loop] LLM refine call failed: {exc}")
+            err_str = str(exc)
+            if "RATE-LIMITED" in err_str or "quota" in err_str.lower() or "429" in err_str:
+                print(f"  [loop] LLM refine call FAILED — rate-limit/quota hit:")
+                for line in err_str.splitlines():
+                    print(f"    {line}")
+                print("  [loop] LLM unavailable; stopping refine cycle.")
+            else:
+                print(f"  [loop] LLM refine call failed: {exc}")
             break
 
         # Save refined strategy
@@ -731,6 +746,9 @@ def run_loop(
     # finished with zero crash candidates to avoid unnecessary work.
     crash_dir = Path(__file__).resolve().parent.parent / "triage" / "crashes"
     has_crashes = len(all_crashes) > 0 or (crash_dir.exists() and any(crash_dir.iterdir()))
+    # Always run triage when crashes exist, even if the loop was skipped due to
+    # LLM unavailability — pre-existing crashes from a prior run should still be
+    # processed.
     if run_triage and has_crashes:
         print(f"\n{'=' * 60}")
         print("Running crash triage ...")

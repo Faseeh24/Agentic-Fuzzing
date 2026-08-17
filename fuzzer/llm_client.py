@@ -52,6 +52,11 @@ def _load_env() -> None:
         pass  # python-dotenv not installed; rely on os.environ
 
 
+def _is_rate_limit(resp: httpx.Response) -> bool:
+    """Return True if the response indicates a rate-limit / quota error."""
+    return resp.status_code in (429, 529)
+
+
 def _try_openrouter(messages: list[dict], timeout: float = 60.0) -> str:
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
@@ -73,6 +78,13 @@ def _try_openrouter(messages: list[dict], timeout: float = 60.0) -> str:
         headers=headers,
         timeout=timeout,
     )
+    if _is_rate_limit(resp):
+        body = resp.text
+        raise httpx.HTTPStatusError(
+            f"OpenRouter rate limit (429): {body[:300]}",
+            request=resp.request,
+            response=resp,
+        )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
@@ -96,8 +108,21 @@ def _try_groq(messages: list[dict], timeout: float = 60.0) -> str:
         headers=headers,
         timeout=timeout,
     )
+    if _is_rate_limit(resp):
+        body = resp.text
+        raise httpx.HTTPStatusError(
+            f"Groq rate limit (429): {body[:300]}",
+            request=resp.request,
+            response=resp,
+        )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
+
+
+def _is_gemini_quota_error(exc: Exception) -> bool:
+    """Detect Gemini quota / rate-limit errors from the SDK."""
+    text = str(exc)
+    return "quota" in text.lower() or "429" in text or "rate limit" in text.lower()
 
 
 def _try_gemini(messages: list[dict], timeout: float = 60.0) -> str:
@@ -116,10 +141,15 @@ def _try_gemini(messages: list[dict], timeout: float = 60.0) -> str:
         role = msg.get("role", "user")
         role_map = {"system": "user", "user": "user", "assistant": "model"}
         parts.append(f"{role_map.get(role, 'user')}: {msg['content']}")
-    # google-generativeai doesn't accept a timeout kwarg on generate_content();
-    # we call it without one and rely on the caller's own timeout discipline.
-    resp = model.generate_content("\n".join(parts))
-    return resp.text
+    try:
+        resp = model.generate_content("\n".join(parts))
+        return resp.text
+    except Exception as exc:
+        if _is_gemini_quota_error(exc):
+            raise RuntimeError(
+                f"Gemini quota exceeded (429): {exc}"
+            ) from exc
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +186,23 @@ class LLMClient:
                 print(f"  [llm] {p['name']} init failed: {exc}")
 
     def chat(self, messages: list[dict], timeout: float = 60.0) -> str:
-        """Send a chat request, trying providers in order until one succeeds."""
-        errors = []
-        for name in self._order:
+        """Send a chat request, trying providers in order until one succeeds.
+
+        Raises ``RuntimeError`` with a detailed message when every provider
+        fails, distinguishing between missing keys, quota/rate-limit hits,
+        and other errors.
+        """
+        errors: list[str] = []
+        missing_keys: list[str] = []
+        quota_hits: list[str] = []
+        for p in PROVIDERS:
+            name = p["name"]
+            if name not in self._order:
+                continue
+            key = p["env_key"]
+            if not os.getenv(key):
+                missing_keys.append(name)
+                continue
             fn = self._available.get(name)
             if fn is None:
                 continue
@@ -167,10 +211,22 @@ class LLMClient:
                 self._active_provider = name
                 return result
             except Exception as exc:
-                errors.append(f"{name}: {exc}")
-        raise RuntimeError(
-            f"All LLM providers failed. Errors: {'; '.join(errors)}"
-        )
+                err_str = str(exc)
+                if "quota" in err_str.lower() or "429" in err_str or "rate limit" in err_str.lower():
+                    quota_hits.append(f"{name}: {exc}")
+                else:
+                    errors.append(f"{name}: {exc}")
+
+        parts: list[str] = []
+        if quota_hits:
+            parts.append("RATE-LIMITED: " + "; ".join(quota_hits))
+        if missing_keys:
+            parts.append(f"Missing API keys for: {', '.join(missing_keys)}")
+        if errors:
+            parts.append("OTHER ERRORS: " + "; ".join(errors))
+        if not parts:
+            parts.append("All configured providers are unavailable.")
+        raise RuntimeError("\n".join(parts))
 
     @property
     def active_provider(self) -> Optional[str]:
