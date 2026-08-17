@@ -9,7 +9,6 @@ this module:
   3. Saves each unique signature to ``triage/crashes/{sig}/``.
   4. Minimizes each reproducer using Hypothesis.
   5. Verifies each minimized reproducer for deterministic reproduction.
-  6. Produces a final triage report at ``report/triage_report.md``.
 
 Run:
     python -m triage.run [--max-iterations N] [--crash-dir PATH]
@@ -21,7 +20,6 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +31,6 @@ ROOT = Path(__file__).resolve().parent.parent
 FUZZER_DIR = ROOT / "fuzzer"
 LOGS_DIR = FUZZER_DIR / "logs"
 CRASH_DIR = ROOT / "triage" / "crashes"
-REPORT_DIR = ROOT / "report"
 
 
 def _import_dedupe():
@@ -64,11 +61,12 @@ def collect_crashes_from_logs(logs_dir: Path) -> list[dict[str, Any]]:
     Scan all ``iteration_N.jsonl`` files in *logs_dir* and extract every
     crash example (codes 3, 4, 5).
 
-    Each iteration log is a JSONL file where each line is a dict with keys:
-        results (dict with code counts), examples (list of (input, code, label))
+    The agentic loop writes ``examples`` as a list of dicts
+    ``{input, code, label}`` (or older records may use 3-tuples). Both shapes
+    are supported here.
 
     Returns a list of dicts:
-        {input, code, label, stderr_preview, iteration}
+        {input, code, label, iteration}
     """
     crashes: list[dict[str, Any]] = []
     if not logs_dir.exists():
@@ -80,14 +78,22 @@ def collect_crashes_from_logs(logs_dir: Path) -> list[dict[str, Any]]:
             if not line.strip():
                 continue
             record = json.loads(line)
-            for input_text, code, label in record.get("examples", []):
+            examples = record.get("examples", [])
+            for ex in examples:
+                if isinstance(ex, dict):
+                    input_text = ex.get("input", "")
+                    code = ex.get("code", 0)
+                    label = ex.get("label", "")
+                else:
+                    # Legacy 3-tuple shape
+                    input_text, code, label = ex[0], ex[1], ex[2]
                 if code in (3, 4, 5):
                     crashes.append({
                         "input": input_text,
                         "code": code,
                         "label": label,
                         "iteration": iteration,
-                        "stderr": "",  # run_harness doesn't return stderr; captured at save time
+                        "stderr": "",  # captured live into triage/crashes/<sig>/
                     })
     return crashes
 
@@ -152,11 +158,10 @@ def run_triage(
     Returns
     -------
     dict with keys:
-        total_crashes, unique_sigs, minimized, confirmed, report_path
+        total_crashes, unique_sigs, minimized, confirmed
     """
     crash_dir = crash_dir or CRASH_DIR
     crash_dir.mkdir(parents=True, exist_ok=True)
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
     dedupe = _import_dedupe()
     minimize = _import_minimize()
@@ -189,14 +194,13 @@ def run_triage(
 
     if not crashes:
         print("  No crashes found. Nothing to triage.")
-        report_path = _write_empty_report(crash_dir)
-        return {"total_crashes": 0, "unique_sigs": 0, "minimized": 0, "confirmed": 0, "report_path": str(report_path)}
+        return {"total_crashes": 0, "unique_sigs": 0, "minimized": 0, "confirmed": 0}
 
     # ── Step 2: Deduplicate ────────────────────────────────────────────────
     print("\n[2/4] Deduplicating crashes ...")
     groups = dedupe.deduplicate(crashes)
     unique_sigs = len(groups)
-    print(f"  {len(crashes)} total → {unique_sigs} unique signatures")
+    print(f"  {len(crashes)} total -> {unique_sigs} unique signatures")
 
     # Save each unique crash to its signature directory
     for sig, sig_crashes in groups.items():
@@ -227,180 +231,13 @@ def run_triage(
     flaky = sum(1 for v in ver_results if v["verdict"] == "flaky")
     print(f"  {confirmed} confirmed, {flaky} flaky")
 
-    # ── Step 5: Write report ───────────────────────────────────────────────
-    print("\nWriting triage report ...")
-    report_path = _write_report(
-        crash_dir=crash_dir,
-        total_crashes=len(crashes),
-        unique_sigs=unique_sigs,
-        min_results=min_results,
-        ver_results=ver_results,
-    )
-    print(f"  Report → {report_path}")
-
     return {
         "total_crashes": len(crashes),
         "unique_sigs": unique_sigs,
         "minimized": len(min_results),
         "confirmed": confirmed,
         "flaky": flaky,
-        "report_path": str(report_path),
     }
-
-
-def _write_empty_report(crash_dir: Path) -> Path:
-    """Write a minimal report when no crashes are found."""
-    report_path = REPORT_DIR / "triage_report.md"
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(
-        "# Crash Triage Report\n\n"
-        "No crashes were found during the fuzzing run.\n\n"
-        f"**Triage timestamp:** {datetime.now(timezone.utc).isoformat()}\n\n"
-        f"**Crash directory:** `{crash_dir}`\n\n"
-        "### Why no crashes were found\n\n"
-        "The mxml library's parser may be robust against the inputs generated\n"
-        "by the current strategy. Possible next steps:\n\n"
-        "- Increase the deliberate-break fraction in the seed strategy.\n"
-        "- Target specific mxml source paths that handle edge cases.\n"
-        "- Run with a longer agentic loop (more iterations).\n"
-        "- Introduce coverage feedback to steer generation toward unexplored paths.\n",
-        encoding="utf-8",
-    )
-    return report_path
-
-
-def _write_report(
-    crash_dir: Path,
-    total_crashes: int,
-    unique_sigs: int,
-    min_results: list[dict[str, Any]],
-    ver_results: list[dict[str, Any]],
-) -> Path:
-    """Write the final triage report in markdown."""
-    report_path = REPORT_DIR / "triage_report.md"
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-
-    now = datetime.now(timezone.utc).isoformat()
-    lines = [
-        "# Crash Triage Report",
-        "",
-        f"**Generated:** {now}",
-        f"**Total crash examples collected:** {total_crashes}",
-        f"**Unique crash signatures:** {unique_sigs}",
-        "",
-        "---",
-        "",
-        "## Crash Signatures",
-        "",
-    ]
-
-    for sig_dir in sorted(crash_dir.iterdir()):
-        if not sig_dir.is_dir():
-            continue
-        meta_path = sig_dir / "meta.json"
-        reproducer = sig_dir / "reproducer.xml"
-        minimized = sig_dir / "reproducer_minimized.xml"
-        sanitizer = sig_dir / "sanitizer_report.txt"
-
-        if not meta_path.exists():
-            continue
-
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        sig = sig_dir.name
-        signal = meta.get("signal", "unknown")
-        code = meta.get("code", 3)
-        timed_out = meta.get("timed_out", False)
-
-        lines += [
-            f"### Signature: `{sig}`",
-            "",
-            f"- **Code:** {code} ({signal})",
-            f"- **Timed out:** {'Yes' if timed_out else 'No'}",
-        ]
-
-        # Show minimized version if available
-        if minimized.exists():
-            min_text = minimized.read_text(encoding="utf-8")
-            lines += [
-                "",
-                "#### Minimized reproducer",
-                "",
-                "```xml",
-                min_text[:1000],
-                "```",
-            ]
-            if len(min_text) > 1000:
-                lines.append(f"\n*(truncated, {len(min_text)} bytes total)*")
-        elif reproducer.exists():
-            orig_text = reproducer.read_text(encoding="utf-8")
-            lines += [
-                "",
-                "#### Reproducer (not yet minimized)",
-                "",
-                "```xml",
-                orig_text[:1000],
-                "```",
-            ]
-
-        # Show sanitizer report if available
-        if sanitizer.exists():
-            san_text = sanitizer.read_text(encoding="utf-8")
-            lines += [
-                "",
-                "#### Sanitizer report",
-                "",
-                "```",
-                san_text[:2000],
-                "```",
-            ]
-            if len(san_text) > 2000:
-                lines.append(f"\n*(truncated, {len(san_text)} bytes total)*")
-
-        lines += ["", "---", ""]
-
-    # Summary table
-    lines += [
-        "## Summary",
-        "",
-        "| Metric | Value |",
-        "|--------|-------|",
-        f"| Total crash examples | {total_crashes} |",
-        f"| Unique signatures | {unique_sigs} |",
-        f"| Minimized | {len(min_results)} |",
-        f"| Confirmed deterministic | {sum(1 for v in ver_results if v['verdict'] == 'confirmed')} |",
-        f"| Flaky | {sum(1 for v in ver_results if v['verdict'] == 'flaky')} |",
-        "",
-        "## Normalization Choices",
-        "",
-        "Crash signatures are computed by normalizing ASan/UBSan stack traces:",
-        "",
-        "- **Stripped frames:** `__interceptor_malloc`, `__interceptor_free`, "
-        "`malloc`, `free`, `__libc_start_main`, `_start` — these are allocator/"
-        "runtime boilerplate that appear in every crash.",
-        "- **Top N frames hashed:** 5 frames. Too few over-merges distinct bugs; "
-        "too many under-merges due to ASLR/inlining noise.",
-        "- **Bare timeouts:** signed as `timeout|struct=<structural_hash>` so "
-        "similar pathological inputs group together.",
-        "",
-        "## Minimization Strategy",
-        "",
-        "Minimization uses Hypothesis's built-in shrinker via a structured "
-        "sub-document strategy that:",
-        "",
-        "- Randomly drops child elements.",
-        "- Randomly drops or shortens attributes.",
-        "- Flattens entity references to their literal equivalents.",
-        "- Reduces nesting depth.",
-        "",
-        "The `@given` test asserts that the same crash code is produced; "
-        "Hypothesis shrinks until it finds the smallest input that still "
-        "triggers the exact same signature.",
-        "",
-    ]
-
-    report_path.write_text("\n".join(lines), encoding="utf-8")
-    return report_path
-
 
 # ---------------------------------------------------------------------------
 # CLI

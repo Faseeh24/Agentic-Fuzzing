@@ -48,7 +48,7 @@ def _get_harness_run():
     return _m.run
 
 
-harness_run = _get_harness_run
+harness_run = _get_harness_run()
 
 
 # ---------------------------------------------------------------------------

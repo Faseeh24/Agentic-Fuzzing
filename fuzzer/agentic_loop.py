@@ -160,12 +160,15 @@ def execute_strategy(
     num_examples: int = 200,
     max_examples_per_run: int = 500,
     timeout_per_example: float = 4.5,
+    capture_stderr: bool = False,
 ) -> dict[str, Any]:
     """Run a Hypothesis strategy and collect classification stats.
 
     Returns a dict with keys:
         total, valid, invalid, harness_error, sanitizer, timeout, bug_crash,
-        acceptance_rate, examples — list of (input_text, code, label) tuples
+        acceptance_rate, examples — list of (input_text, code, label[, stderr])
+        tuples. Stderr is included only when capture_stderr=True and the example
+        crashed (codes 3, 4, 5).
     """
     harness_run = _import_run_harness()
 
@@ -285,10 +288,18 @@ def execute_strategy(
         except (UnicodeEncodeError, AttributeError):
             continue
 
-        code, label = harness_run(example)
+        if capture_stderr:
+            code, label, stderr_text = harness_run(example, return_stderr=True)
+        else:
+            code, label = harness_run(example)
+            stderr_text = ""
+
         results.setdefault(code, 0)
         results[code] += 1
-        results["examples"].append((example, code, label))
+        if capture_stderr and code in (3, 4, 5):
+            results["examples"].append((example, code, label, stderr_text))
+        else:
+            results["examples"].append((example, code, label))
 
         if len(results["examples"]) >= max_examples_per_run:
             break
@@ -320,10 +331,17 @@ GRAMMAR_PRODS = [
 import re as _re
 
 
-def compute_grammar_coverage(examples: list[tuple[str, int, str]]) -> dict[str, int]:
-    """Count which grammar productions appear in the generated examples."""
+def compute_grammar_coverage(examples: list[Any]) -> dict[str, int]:
+    """Count which grammar productions appear in the generated examples.
+
+    Each example may be a 3-tuple ``(input, code, label)`` or a 4-tuple
+    ``(input, code, label, stderr)``; only the input text is used here.
+    """
     counts: dict[str, int] = {prod: 0 for prod, _ in GRAMMAR_PRODS}
-    for text, _, _ in examples:
+    for tup in examples:
+        text = tup[0] if tup else ""
+        if not text:
+            continue
         for name, pattern in GRAMMAR_PRODS:
             if _re.search(pattern, text):
                 counts[name] += 1
@@ -335,10 +353,12 @@ def compute_crash_signatures(results: dict[str, Any]) -> list[dict[str, str]]:
     """Extract unique crash/timeout/sanitizer examples."""
     sigs: list[dict[str, str]] = []
     seen: set[tuple[int, str]] = set()
-    for text, code, label in results.get("examples", []):
+    for tup in results.get("examples", []):
+        text = tup[0]
+        code = tup[1]
+        label = tup[2]
         if code not in (3, 4, 5):
             continue
-        # Truncate text for key; use first 200 chars
         key = (code, text[:200])
         if key in seen:
             continue
@@ -363,6 +383,24 @@ def log_iteration(
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOGS_DIR / f"iteration_{iteration:04d}.jsonl"
 
+    # Examples may include stderr (4-tuple) or not (3-tuple). Normalise to
+    # a JSON-serialisable shape: store the input + code only, plus a parallel
+    # stderr file per crash in the triage/crashes/ dir.
+    examples_for_log = []
+    for tup in results.get("examples", []):
+        if len(tup) == 4:
+            text, code, label, _stderr = tup
+        else:
+            text, code, label = tup
+        # Ensure text is clean UTF-8 for JSON serialization
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", errors="replace")
+        examples_for_log.append({"input": text, "code": code, "label": label})
+
+    # Ensure strategy_code is clean UTF-8
+    if isinstance(strategy_code, bytes):
+        strategy_code = strategy_code.decode("utf-8", errors="replace")
+
     record = {
         "iteration": iteration,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -381,10 +419,11 @@ def log_iteration(
         },
         "grammar_coverage": grammar_coverage,
         "crash_signatures": crash_sigs,
+        "examples": examples_for_log,
     }
 
     with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        f.write(json.dumps(record, ensure_ascii=True) + "\n")
 
     return log_path
 
@@ -397,19 +436,32 @@ def has_converged(
     curr_results: dict[str, Any],
     max_iters: int,
     iteration: int,
+    loop_elapsed: float,
+    wall_clock_cap_sec: float = 600.0,
+    cost_per_example: float = 0.001,
 ) -> bool:
     """Decide whether to stop early.
 
     Convergence criteria (any one triggers stop):
       - Max iterations reached
-      - A bug crash (code 5) was found
-      - Acceptance rate dropped below 0.01 for two consecutive iterations
+      - Wall-clock cap exceeded
+      - Estimated LLM cost exceeds the $5 budget
+      - Acceptance rate hasn't moved for two consecutive iterations (stall)
     """
     if iteration >= max_iters:
         return True
-    if curr_results.get(5, 0) > 0:
-        return True  # bug found — stop and report
-    # Stability: if acceptance rate hasn't changed much and no new crashes
+    # Budget stop: $5 ≈ ~5M input tokens at current small-model pricing.
+    # Coarse proxy: $0.001 per example × total examples generated so far.
+    total_examples_so_far = (
+        prev_results.get("total", 0) + curr_results.get("total", 0)
+    )
+    est_cost = total_examples_so_far * cost_per_example
+    if est_cost >= 5.0:
+        print(f"\n  → LLM cost budget (~$5) exhausted (est. ${est_cost:.2f}); stopping.")
+        return True
+    if loop_elapsed >= wall_clock_cap_sec:
+        return True
+    # Stall: if the strategy is no longer improving acceptance rate
     prev_accept = prev_results.get("acceptance_rate", 0.0)
     curr_accept = curr_results.get("acceptance_rate", 0.0)
     if iteration > 1 and abs(curr_accept - prev_accept) < 0.02:
@@ -488,8 +540,30 @@ def run_loop(
     STRATEGIES_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Live crash directory: every sanitizer/timeout/bug_crash input is saved
+    # here as soon as it happens, so triage can read crashes from disk instead
+    # of re-running the harness (and so that a crashed loop leaves a record).
+    CRASH_DIR = FUZZER_DIR.parent / "triage" / "crashes"
+    CRASH_DIR.mkdir(parents=True, exist_ok=True)
+
     # Track all crash examples with stderr for triage
     all_crashes: list[dict[str, Any]] = []
+
+    def _save_crash_live(input_text: str, code: int, label: str, stderr: str) -> None:
+        """Persist a crash immediately, using dedupe's save_crash_record."""
+        try:
+            sys.path.insert(0, str(FUZZER_DIR.parent / "triage"))
+            from triage.dedupe import save_crash_record
+            save_crash_record(
+                crash_dir=CRASH_DIR,
+                input_text=input_text,
+                stderr_text=stderr or "",
+                signal_name=label,
+                code=code,
+            )
+        except Exception as exc:
+            # Don't let a triage-save failure abort the loop
+            print(f"  [warn] failed to save crash: {exc}")
 
     # Load seed strategy or generate one
     strategy_code = ""
@@ -536,22 +610,31 @@ def run_loop(
         results = execute_strategy(
             strategy_code,
             num_examples=num_examples,
+            capture_stderr=True,
         )
         elapsed = time.time() - t0
 
         grammar_coverage = compute_grammar_coverage(results.get("examples", []))
         crash_sigs = compute_crash_signatures(results)
 
-        # Collect crash examples with full stderr for triage
-        for text, code, label in results.get("examples", []):
+        # Collect crash examples with full stderr for triage, and persist
+        # them to disk immediately so triage has access to the full reports.
+        for tup in results.get("examples", []):
+            # examples are (input, code, label) or (input, code, label, stderr)
+            if len(tup) == 4:
+                text, code, label, stderr_text = tup
+            else:
+                text, code, label = tup
+                stderr_text = ""
             if code in (3, 4, 5):
                 all_crashes.append({
                     "input": text,
                     "code": code,
                     "label": label,
                     "iteration": iteration,
-                    "stderr": "",  # populated by triage run
+                    "stderr": stderr_text,
                 })
+                _save_crash_live(text, code, label, stderr_text)
 
         log_path = log_iteration(
             iteration=iteration,
@@ -578,20 +661,24 @@ def run_loop(
         print(f"  bug_crash(5)   : {bug_count}")
         print(f"  grammar cov    : {grammar_coverage.get('covered_prods', 0)}/{grammar_coverage.get('total_prods', 0)}")
         print(f"  log            : {log_path}")
+        if san_count or timeout_count or bug_count:
+            print(f"  ★ {san_count + timeout_count + bug_count} crash candidate(s) saved to triage/crashes/")
 
-        if bug_count > 0 or san_count > 0 or timeout_count > 0:
-            print(f"\n  ★ CRASH/SANITIZER/TIMEOUT FOUND — stopping loop")
-            final_results = results
-            final_results["_log_path"] = str(log_path)
-            final_results["_iteration"] = iteration
-            break
-
+        # Per assignment spec: don't stop on first crash — run every iteration
+        # within the budget to gather a *family* of related bugs, not just the
+        # first one. Stop only on wall-clock cap, max iterations, or budget.
         final_results = results
         final_results["_log_path"] = str(log_path)
         final_results["_iteration"] = iteration
 
-        if has_converged(prev_results, results, max_iterations, iteration):
-            print("\n  → Converged (no improvement); stopping.")
+        # Convergence: stop only if budget or wall-clock reached, or if
+        # acceptance rate has stalled for two consecutive iterations.
+        if has_converged(
+            prev_results, results, max_iterations, iteration,
+            loop_elapsed=(time.time() - loop_start),
+            wall_clock_cap_sec=wall_clock_cap_sec,
+        ):
+            print("\n  → Converged; stopping loop.")
             break
 
         # ── refine ──────────────────────────────────────────────────────
@@ -640,14 +727,18 @@ def run_loop(
     print(f"\n[loop] Summary written → {summary_md}")
 
     # ── triage ─────────────────────────────────────────────────────────────
-    if run_triage and all_crashes:
+    # Only run triage when crashes were actually found — skip if the loop
+    # finished with zero crash candidates to avoid unnecessary work.
+    crash_dir = Path(__file__).resolve().parent.parent / "triage" / "crashes"
+    has_crashes = len(all_crashes) > 0 or (crash_dir.exists() and any(crash_dir.iterdir()))
+    if run_triage and has_crashes:
         print(f"\n{'=' * 60}")
         print("Running crash triage ...")
         print(f"{'=' * 60}")
         try:
             triage_mod = _import_trage()
             triage_result = triage_mod.run_triage(
-                crash_dir=Path(__file__).resolve().parent.parent / "triage" / "crashes",
+                crash_dir=crash_dir,
                 num_examples=num_examples,
             )
             final_results["_triage"] = triage_result
@@ -657,8 +748,8 @@ def run_loop(
         except Exception as exc:
             print(f"[loop] Triage failed: {exc}")
             final_results["_triage_error"] = str(exc)
-    elif run_triage:
-        print("\nNo crashes to triage.")
+    else:
+        print("\nNo crashes found; triage skipped.")
 
     final_results["_loop_elapsed"] = loop_elapsed
     final_results["_total_crashes"] = len(all_crashes)

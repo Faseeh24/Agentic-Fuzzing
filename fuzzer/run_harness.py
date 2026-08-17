@@ -41,7 +41,7 @@ def _harness_path():
     return "mxml_harness"
 
 
-def run(input_text, input_path=None):
+def run(input_text, input_path=None, return_stderr=False):
     """
     Run the harness with the given input.
 
@@ -51,12 +51,16 @@ def run(input_text, input_path=None):
         XML text to feed via stdin. Ignored if input_path is given.
     input_path : str or None
         Path to a file containing XML. If None, input is read from stdin.
+    return_stderr : bool
+        If True, also return the raw stderr text (for triage). Adds a small
+        overhead but is essential for crash signature extraction.
 
     Returns
     -------
-    (exit_code, category)
-        exit_code : int  — numeric classification (0-5)
-        category  : str  — human-readable name
+    If return_stderr is False:
+        (exit_code, category) — exit_code 0-5, category human-readable
+    If return_stderr is True:
+        (exit_code, category, stderr_text)
     """
     harness = _harness_path()
 
@@ -75,22 +79,29 @@ def run(input_text, input_path=None):
             timeout=TIMEOUT_SEC,
         )
     except subprocess.TimeoutExpired:
+        if return_stderr:
+            return 4, "timeout", ""
         return 4, "timeout"
 
-    stderr_lower = result.stderr.decode("utf-8", errors="replace").lower()
+    stderr_text = result.stderr.decode("utf-8", errors="replace")
+    stderr_lower = stderr_text.lower()
 
     # Sanitizer detection: ASan / UBSan print recognizable messages to stderr
     if "addresssanitizer" in stderr_lower or "runtime error" in stderr_lower:
-        return 3, "sanitizer"
-
-    if result.returncode == 0:
-        return 0, "valid"
+        code = 3
+        label = "sanitizer"
+    elif result.returncode == 0:
+        code, label = 0, "valid"
     elif result.returncode == 1:
-        return 1, "invalid"
+        code, label = 1, "invalid"
     elif result.returncode == 2:
-        return 2, "harness_error"
+        code, label = 2, "harness_error"
     else:
-        return 5, "bug_crash"
+        code, label = 5, "bug_crash"
+
+    if return_stderr:
+        return code, label, stderr_text
+    return code, label
 
 
 if __name__ == "__main__":

@@ -31,4 +31,4 @@ services:
     volumes:
       - .:/src
     working_dir: /src
-    command: ["sh", "-c", "make -C /src/harness all test && make -C /src/harness test-wrapper && PYTHONPATH=/src python3 -m fuzzer.baseline_strategy && echo '' && echo '=== Agentic loop (seed, 3 iters) ===' && PYTHONPATH=/src python3 -m fuzzer.agentic_loop --max-iterations 3 --num-examples 50 && echo '' && echo '=== Crash triage ===' && PYTHONPATH=/src python3 -m triage.run || echo '(agentic loop / triage skipped: set API keys in .env to enable)']"]
+    command: ["sh", "-c", "make -C /src/harness all test && make -C /src/harness test-wrapper && PYTHONPATH=/src python3 -m fuzzer.baseline_strategy && echo '' && echo '=== Agentic loop (seed, 5 iters, 200 ex) ===' && PYTHONPATH=/src python3 -m fuzzer.agentic_loop --max-iterations 5 --num-examples 200 && echo '' && echo '=== Crash triage ===' && PYTHONPATH=/src python3 -m triage.run || echo '(agentic loop / triage skipped: set API keys in .env to enable)']"]

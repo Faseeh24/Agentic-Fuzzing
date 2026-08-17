@@ -15,7 +15,7 @@ This project implements a complete agentic fuzzing pipeline (Steps 4–6 of the 
 3. **Harness** — `harness/mxml_harness.c` loads XML via `mxmlLoadString()` with ASan + UBSan.
 4. **Agentic loop** — `fuzzer/agentic_loop.py` iteratively generates and refines Hypothesis strategies using an LLM.
 5. **Crash triage** — `triage/` deduplicates, minimizes, and verifies crash reproducers.
-6. **Report** — `report/` produces the written design/findings/challenges report.
+6. **Report** — `report/report.md` is filled in manually with the final design, findings, and challenges.
 
 ---
 
@@ -52,10 +52,8 @@ Agentic-Fuzzing/
 │   ├── minimize.py                   # Hypothesis-based input minimization
 │   ├── verify.py                     # Deterministic reproduction verification
 │   └── run.py                        # Main triage entry point
-├── report/                           # Written report generation
-│   ├── generate.py                   # Report generator
-│   ├── report.md                     # Generated two-page written report
-│   └── triage_report.md              # Generated crash triage report
+├── report/                           # Written report (filled in manually)
+│   └── report.md                     # Two-page written report (design, findings, challenges)
 ├── .env.example                      # API key placeholders
 ├── Dockerfile                        # Debian trixie-slim with sanitizers + Python deps
 ├── docker-compose.yml                # Full pipeline orchestration
@@ -310,35 +308,11 @@ python -m triage.run --crash-dir /path/to/crashes
 | `triage/crashes/{signature}/reproducer_minimized.xml` | Hypothesis-shrunk reproducer |
 | `triage/crashes/{signature}/sanitizer_report.txt` | Full ASan/UBSan stderr |
 | `triage/crashes/{signature}/meta.json` | Signal type, exit code, timeout flag |
-| `report/triage_report.md` | Generated triage report with all crash details |
+| `triage/crashes/{signature}/meta.json` | Signal type, exit code, timeout flag |
 
 ---
 
-## Report (Step 6)
-
-The written report is generated from all artifacts:
-
-```bash
-# Docker
-docker compose run --rm harness python3 -m report.generate
-
-# Native
-python -m report.generate
-```
-
-Output files:
-- **`report/report.md`** — Two-page written report (design, findings, challenges)
-- **`report/triage_report.md`** — Detailed crash report with reproducer excerpts
-
-The report covers:
-- **Design**: grammar source, adaptations, harness classification, agentic loop
-  structure, proxy signal choice, triage methodology
-- **Findings**: crash counts, strategy evolution across iterations,
-  under-tested grammar regions
-- **Challenges**: hypothesis composite wrapping, deduplication choices,
-  timeout-as-crash policy, generator correction
-
----
+The written report (`report/report.md`) is filled in manually after the pipeline completes.
 
 ## Full Pipeline
 
@@ -352,9 +326,9 @@ This executes:
 1. `make -C harness all test` — build and test the C harness
 2. `make -C harness test-wrapper` — run Python wrapper classification tests
 3. `python3 -m fuzzer.baseline_strategy` — verify pipeline plumbing
-4. `python3 -m fuzzer.agentic_loop --max-iterations 3 --num-examples 50` —
-   run the agentic fuzzing loop (3 iterations for the demo)
-5. `python3 -m triage.run` — triage any crashes found
+4. `python3 -m fuzzer.agentic_loop --max-iterations 5 --num-examples 200` —
+   run the agentic fuzzing loop (5 iterations, 200 examples per iteration)
+5. `python3 -m triage.run` — triage any crashes found (skipped if none)
 
 ---
 

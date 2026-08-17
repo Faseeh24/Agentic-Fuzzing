@@ -1,6 +1,6 @@
 # Agentic Fuzzing of Mini-XML (mxml)
 
-**Date:** 2026-08-17T06:56:23.571642+00:00
+**Date:** 2026-08-17T11:01:40.193469+00:00
 **Target:** mxml @ pinned commit `e6824d899d949387fb0156af6f4101373b9be519`
 **Grammar:** ANTLR4 XML grammar from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)
 
@@ -76,24 +76,15 @@ Crashes (codes 3–5) are collected, deduplicated, minimized, and verified by `t
 
 ## Findings
 
-### No Crashes Found
+### Crashes Found
 
-The agentic loop ran for 0 iteration(s) and generated 0 total examples.
+**Total unique crash signatures:** 1
+**Confirmed deterministic:** 0
 
-#### Why no crashes were found
+| Signature | Code | Signal | Original | Minimized |
+|-----------|------|--------|----------|-----------|
+| `c88cfdec4115a696` | 3 | sanitizer | 37B | 0B |
 
-Several factors may explain the absence of crashes:
-
-1. **mxml is a small, well-tested library.** Its parser is ~5000 lines of C and has been fuzzed extensively by the mxml project itself (see `target/mxml/afl-input/`). Many obvious edge cases are already defended against.
-2. **The deliberate-break sub-strategy may not have been aggressive enough.** Mismatched tags, duplicate attributes, and second root elements are structural violations that mxml's parser is designed to reject gracefully (exit code 1). Finding a crash would require pushing these violations into memory-unsafe code paths (e.g. triggering a NULL dereference in the tag-matching logic).
-3. **Timeouts may have been missed.** If the harness timeout (5s) is too generous for mxml's parser, pathological inputs may not reach the timeout threshold. Conversely, if mxml's parser is fast enough that no input exceeds 5s, we'd never see code 4.
-
-#### What we'd try next
-
-- **Deeper structural mutations**: Instead of just mismatched tags, generate inputs that exercise mxml's internal state machine at boundaries (e.g. unterminated declarations, deeply nested CDATA with adjacent `]]>` sequences).
-- **Fuzzing mxml's other APIs**: `mxmlLoadFile()`, `mxmlSaveString()`, `mxmlSearch()`, and `mxmlIndex` APIs have separate code paths that may be more vulnerable.
-- **Coverage-guided fuzzing**: Hooking mxml's source to expose edge coverage would let us steer generation toward unexplored paths rather than relying on proxy signals.
-- **Longer agentic loop**: 3 iterations is the minimum; a full 5-iteration run (or more) would give the LLM more opportunities to discover crash-inducing patterns.
 ---
 
 ## Challenges
