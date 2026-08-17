@@ -168,15 +168,17 @@ docker compose run --rm harness python3 -m fuzzer.baseline_strategy
 PYTHONPATH=fuzzer python3 -m fuzzer.baseline_strategy
 ```
 
-### Fuzzer Architecture
+## Fuzzer Architecture
 
 ```
 fuzzer/
-├── run_harness.py       # Python wrapper: runs C harness, detects timeout/sanitizer/bug crashes
-├── baseline_strategy.py # Baseline: fixed corpus to verify pipeline plumbing
-├── strategies/          # (future) Hypothesis-based XML generation strategies
-├── agentic_loop.py      # (future) Agentic orchestration loop
-└── llm_client.py        # (future) LLM integration for adaptive fuzzing
+├── run_harness.py          # Python wrapper: runs C harness, detects timeout/sanitizer/bug crashes
+├── baseline_strategy.py    # Baseline: fixed corpus to verify pipeline plumbing
+├── agentic_loop.py         # LLM-driven agentic fuzzing loop
+├── llm_client.py           # Multi-provider LLM client (OpenRouter / Groq / Gemini)
+├── strategies/             # Generated Hypothesis strategies (iteration_*.py)
+├── logs/                   # JSONL iteration logs + loop_summary.md
+└── prompts/                # LLM prompt templates (seed_prompt.md, refine_prompt.md)
 ```
 
 **Exit code contract** (0–5):
@@ -189,6 +191,79 @@ fuzzer/
 | `3`  | Sanitizer crash — ASan/UBSan detected a violation | Python wrapper |
 | `4`  | Timeout — input exceeded 5-second limit | Python wrapper |
 | `5`  | Bug crash — unexpected crash (segfault, abort, etc.) | Python wrapper |
+
+---
+
+## Agentic Loop
+
+The agentic loop (`fuzzer/agentic_loop.py`) iteratively generates and refines a
+Hypothesis XML strategy using an LLM. Each iteration:
+
+1. **Generate / refine strategy** — the LLM produces (or revises) a Python module
+   exporting `xml_strategy`, based on the ANTLR grammar and mxml-specific
+   adaptation notes from `grammar/README.md`.
+2. **Execute** — the strategy is run against the C harness via `run_harness.py`,
+   collecting exit-code statistics over a configurable number of examples.
+3. **Signal extraction** — proxy signals are computed:
+   - **Acceptance rate** — fraction of inputs mxml accepts (code 0)
+   - **Grammar coverage** — which XML grammar productions appear in the corpus
+   - **Crash signatures** — unique sanitizer / timeout / bug-crash inputs
+4. **Log** — every iteration is appended to `fuzzer/logs/iteration_N.jsonl`
+   and a markdown summary is written to `fuzzer/logs/loop_summary.md`.
+5. **Decide** — the loop stops when a crash is found, convergence is reached,
+   or the max-iteration budget is exhausted. The refine prompt steers the next
+   strategy toward unexplored grammar productions and crash-adjacent inputs.
+
+### Proxy Signals
+
+| Signal | How it's measured | Steering effect |
+|--------|------------------|----------------|
+| Acceptance rate | `valid / total` | Low rate → LLM tightens well-formed cases |
+| Grammar coverage | Regex detection of production tokens in corpus | Missing productions → LLM adds coverage |
+| Crash signatures | Distinct code-3/4/5 examples | Existing crashes → LLM generates near-miss variants |
+
+### Configuration
+
+Copy `.env.example` to `.env` and fill in at least one API key:
+
+```bash
+cp .env.example .env
+# edit .env and add your key(s)
+```
+
+Supported providers (auto-fallback in order: OpenRouter → Groq → Gemini):
+
+| Provider | Env var | Default model |
+|----------|---------|--------------|
+| OpenRouter | `OPENROUTER_API_KEY` | `google/gemini-2.0-flash-001` |
+| Groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| Gemini | `GEMINI_API_KEY` | `gemini-2.0-flash` |
+
+### Running the Loop
+
+```bash
+# Docker (recommended — harness must be built first)
+docker compose run --rm harness \
+    PYTHONPATH=/src python3 -m fuzzer.agentic_loop \
+    --max-iterations 10 --num-examples 200
+
+# Native (Windows / Linux, requires Python + hypothesis + httpx)
+python -m fuzzer.agentic_loop --max-iterations 10
+```
+
+Optional: seed the loop with an existing strategy:
+
+```bash
+python -m fuzzer.agentic_loop --seed-strategy strategies/iteration_0000.py
+```
+
+### Artifacts
+
+| Path | Content |
+|------|---------|
+| `fuzzer/strategies/iteration_N[_refined].py` | Generated Hypothesis strategy modules |
+| `fuzzer/logs/iteration_N.jsonl` | Per-iteration JSONL log (strategy, results, coverage, signatures) |
+| `fuzzer/logs/loop_summary.md` | Markdown summary of the full run |
 
 ---
 

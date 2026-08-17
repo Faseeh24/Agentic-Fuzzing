@@ -19,9 +19,17 @@ RUN apt-get update && apt-get install -y \
         gcc \
         make \
         python3 \
+        python3-pip \
         libasan8 \
         libubsan1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python fuzzing / LLM dependencies
+RUN pip3 install --break-system-packages \
+        hypothesis \
+        httpx \
+        python-dotenv \
+        google-generativeai
 
 # Copy the project source into the image
 WORKDIR /src
