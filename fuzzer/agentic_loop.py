@@ -90,7 +90,7 @@ def load_adaptations() -> str:
 def execute_strategy(
     strategy_code: str,
     num_examples: int = 200,
-    max_examples_per_run: int = 50,
+    max_examples_per_run: int = 500,
     timeout_per_example: float = 4.5,
 ) -> dict[str, Any]:
     """Run a Hypothesis strategy and collect classification stats.
@@ -368,10 +368,11 @@ def _import_trage():
 
 
 def run_loop(
-    max_iterations: int = 10,
+    max_iterations: int = 5,
     seed_strategy_path: Optional[str] = None,
     num_examples: int = 200,
     run_triage: bool = True,
+    wall_clock_cap_sec: float = 600.0,
 ) -> dict[str, Any]:
     """Run the agentic fuzzing loop with optional triage.
 
@@ -431,6 +432,11 @@ def run_loop(
     loop_start = time.time()
 
     for iteration in range(1, max_iterations + 1):
+        # Wall-clock backstop: 10-minute cap on the full run
+        if (time.time() - loop_start) >= wall_clock_cap_sec:
+            print(f"\n  → Wall-clock cap ({wall_clock_cap_sec:.0f}s) reached; stopping.")
+            break
+
         print(f"\n{'─' * 60}")
         print(f"[loop] Iteration {iteration}")
         print(f"{'─' * 60}")
@@ -575,16 +581,26 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Agentic fuzzing loop for mxml")
-    parser.add_argument("--max-iterations", type=int, default=10, help="Max refine cycles")
+    parser.add_argument("--max-iterations", type=int, default=5,
+                        help="Max refine cycles (hard cap: 5 per assignment)")
     parser.add_argument("--seed-strategy", type=str, default=None, help="Path to initial strategy")
-    parser.add_argument("--num-examples", type=int, default=200, help="Examples per iteration")
+    parser.add_argument("--num-examples", type=int, default=200,
+                        help="Examples per iteration (max 500 per assignment)")
     parser.add_argument("--no-triage", action="store_true", help="Skip crash triage after loop")
     args = parser.parse_args()
 
+    # Enforce assignment constraints
+    max_iterations = min(args.max_iterations, 5)
+    num_examples = min(args.num_examples, 500)
+    if args.max_iterations > 5:
+        print(f"[loop] Capping max-iterations to 5 (assignment constraint)")
+    if args.num_examples > 500:
+        print(f"[loop] Capping num-examples to 500 (assignment constraint)")
+
     result = run_loop(
-        max_iterations=args.max_iterations,
+        max_iterations=max_iterations,
         seed_strategy_path=args.seed_strategy,
-        num_examples=args.num_examples,
+        num_examples=num_examples,
         run_triage=not args.no_triage,
     )
     sys.exit(0 if result.get(5, 0) == 0 else 1)

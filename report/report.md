@@ -1,6 +1,6 @@
 # Agentic Fuzzing of Mini-XML (mxml)
 
-**Date:** 2026-08-17T06:44:58.213134+00:00
+**Date:** 2026-08-17T06:56:23.571642+00:00
 **Target:** mxml @ pinned commit `e6824d899d949387fb0156af6f4101373b9be519`
 **Grammar:** ANTLR4 XML grammar from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)
 

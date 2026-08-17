@@ -42,8 +42,13 @@ from typing import Any, Optional
 # Harness imports (deferred to avoid circular deps at import time)
 # ---------------------------------------------------------------------------
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "fuzzer"))
-from run_harness import run as harness_run  # noqa: E402
+def _get_harness_run():
+    """Lazily import run_harness (deferred to avoid circular deps)."""
+    import fuzzer.run_harness as _m
+    return _m.run
+
+
+harness_run = _get_harness_run
 
 
 # ---------------------------------------------------------------------------
