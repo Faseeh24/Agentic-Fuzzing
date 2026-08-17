@@ -17,7 +17,8 @@ The approach:
    XML that the fuzzer generates from.
 2. **Target** — A pinned version of mxml (Mini-XML) is vendored under `target/mxml/` as the
    fuzzing target.
-3. **Comparison** — `grammar/README.md` documents the differences between the ANTLR grammar
+3. **Comparison** — `grammar/ADAPTATIONS.md` (source-verified) is loaded into the LLM as
+   reference material; `grammar/README.md` is the human-readable version of the same content.
    and mxml's actual accepted dialect, so the generator only emits inputs mxml can parse.
 4. **Harness** — `harness/mxml_harness.c` is a minimal C harness that loads XML from a file
    and reports whether mxml accepts or rejects it.
@@ -31,7 +32,8 @@ The approach:
 ```
 Agentic-Fuzzing/
 ├── grammar/                    # ANTLR grammar sources and comparison docs
-│   ├── README.md               # ANTLR grammar ↔ mxml feature comparison
+│   ├── README.md               # Human-readable grammar comparison docs
+│   ├── ADAPTATIONS.md          # LLM-facing grammar↔mxml comparison (reference material)
 │   ├── original/               # Verbatim ANTLR reference XML grammar
 │   │   ├── XMLLexer.g4
 │   │   └── XMLParser.g4
@@ -285,7 +287,9 @@ documented as they are implemented.)
 
 ## Grammar Comparison
 
-See [`grammar/README.md`](grammar/README.md) for the complete analysis, including:
+See [`grammar/ADAPTATIONS.md`](grammar/ADAPTATIONS.md) for the source-verified comparison
+   used as LLM reference material; [`grammar/README.md`](grammar/README.md) is the
+   human-readable documentation version.
 
 - Feature-by-feature comparison table (ANTLR grammar vs mxml)
 - Generator constraints for safe Hypothesis strategies

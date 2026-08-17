@@ -32,6 +32,9 @@ FUZZER_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT  # Agentic-Fuzzing/
 HARNESS_DIR = PROJECT_ROOT / "harness"
 GRAMMAR_DIR = PROJECT_ROOT / "grammar"
+# Primary LLM-facing adaptations reference (source-verified grammar↔mxml comparison).
+# Kept as ADAPTATIONS.md; README.md is the human-readable documentation version.
+ADAPTATIONS_FILE = "ADAPTATIONS.md"
 STRATEGIES_DIR = FUZZER_DIR / "strategies"
 LOGS_DIR = FUZZER_DIR / "logs"
 PROMPTS_DIR = FUZZER_DIR / "prompts"
@@ -74,10 +77,11 @@ def load_grammar() -> str:
 
 
 def load_adaptations() -> str:
-    readme = _load_text(GRAMMAR_DIR / "README.md")
-    # Extract the "Documented Adaptations" / feature table section
-    # We take the whole file; the prompt template will slot it in.
-    return readme
+    path = GRAMMAR_DIR / ADAPTATIONS_FILE
+    if not path.exists():
+        # Fallback to README.md if ADAPTATIONS.md doesn't exist yet
+        path = GRAMMAR_DIR / "README.md"
+    return _load_text(path)
 
 
 # ── strategy execution ────────────────────────────────────────────────────────
