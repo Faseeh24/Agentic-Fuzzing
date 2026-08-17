@@ -24,3 +24,9 @@ Revise the strategy. Specifically:
   (similar shape, mutated sizes/depths/character sets) to aid minimization and check for
   a family of related bugs, while still spending some budget on unexplored areas.
 - Output ONLY the full revised Python file contents, same interface (`xml_strategy`).
+
+HYPOTHESIS API CONSTRAINTS (strict — do NOT violate these):
+- `st.frequency()` DOES NOT EXIST in Hypothesis. Do NOT use it.
+- For weighted mixing, use `st.one_of(...)` for equal weight or a `@st.composite`
+  function that draws an index and dispatches, as shown in the seed prompt.
+- The module must expose exactly one attribute: `xml_strategy` (a Hypothesis SearchStrategy).

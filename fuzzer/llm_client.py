@@ -33,7 +33,7 @@ PROVIDERS = [
         "name": "gemini",
         "env_key": "GEMINI_API_KEY",
         "api_url": None,  # Uses google-generativeai SDK
-        "model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+        "model": os.getenv("GEMINI_MODEL", "gemini-flash-latest"),
     },
 ]
 
@@ -109,14 +109,16 @@ def _try_gemini(messages: list[dict], timeout: float = 60.0) -> str:
     except ImportError:
         raise RuntimeError("google-generativeai package not installed")
     genai.configure(api_key=key)
-    model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+    model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-flash-latest"))
     # Convert OpenAI-style messages to Gemini format
     parts = []
     for msg in messages:
         role = msg.get("role", "user")
         role_map = {"system": "user", "user": "user", "assistant": "model"}
         parts.append(f"{role_map.get(role, 'user')}: {msg['content']}")
-    resp = model.generate_content("\n".join(parts), timeout=timeout)
+    # google-generativeai doesn't accept a timeout kwarg on generate_content();
+    # we call it without one and rely on the caller's own timeout discipline.
+    resp = model.generate_content("\n".join(parts))
     return resp.text
 
 

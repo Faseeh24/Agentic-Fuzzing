@@ -63,3 +63,28 @@ above were distilled from — consult it if you need more detail than the summar
 e.g. exact node types, the canonical valid-document example, or additional source
 line references):
 {adaptations}
+
+HYPOTHESIS API CONSTRAINTS (strict — do NOT violate these or the strategy will crash):
+- `st.frequency()` DOES NOT EXIST in Hypothesis. Do NOT use it.
+- For weighted mixing of strategies, use ONE of these patterns only:
+    Pattern A (equal weight): `st.one_of(strat_a, strat_b, strat_c)`
+    Pattern B (weighted via composite):
+        @st.composite
+        def weighted_mix(draw):
+            kind = draw(st.sampled_from(['good', 'bad']))
+            if kind == 'good':
+                return draw(good_strategy)
+            return draw(bad_strategy)
+    Pattern C (integer-indexed):
+        choices = [strat_a, strat_b, strat_c]
+        weights = [80, 15, 5]
+        total = sum(weights)
+        idx = draw(st.integers(0, total - 1))
+        cum = 0
+        for i, w in enumerate(weights):
+            cum += w
+            if idx < cum:
+                return draw(choices[i])
+- For recursion, use `@st.composite` with a `max_depth` parameter passed through
+  closure, NOT `st.deferred` (deferred is error-prone with the execute_strategy runner).
+- The module must expose exactly one attribute: `xml_strategy` (a Hypothesis SearchStrategy).

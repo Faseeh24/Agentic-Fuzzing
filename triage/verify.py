@@ -20,7 +20,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "fuzzer"))
 from run_harness import run as harness_run  # noqa: E402
 
-from dedupe import signature_for, classify_stderr  # noqa: E402
+from triage.dedupe import signature_for, classify_stderr  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

@@ -24,12 +24,9 @@ RUN apt-get update && apt-get install -y \
         libubsan1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python fuzzing / LLM dependencies
-RUN pip3 install --break-system-packages \
-        hypothesis \
-        httpx \
-        python-dotenv \
-        google-generativeai
+# Install Python fuzzing / LLM dependencies from requirements.txt
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --break-system-packages -r /tmp/requirements.txt
 
 # Copy the project source into the image
 WORKDIR /src

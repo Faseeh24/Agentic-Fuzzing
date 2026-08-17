@@ -87,6 +87,74 @@ def load_adaptations() -> str:
 # ── strategy execution ────────────────────────────────────────────────────────
 
 
+def _fix_common_llm_errors(code: str) -> str:
+    """Patch common LLM-generated strategy mistakes before execution.
+
+    The LLM sometimes hallucinates Hypothesis API names or wraps output in
+    markdown. This function normalises the most frequent failures so the
+    strategy can still be tested instead of being silently skipped.
+    """
+    import re as _re
+
+    # Strip markdown code fences if the LLM wrapped the output
+    code = _re.sub(r"^```(?:python)?\s*\n", "", code, flags=_re.MULTILINE)
+    code = _re.sub(r"\n```\s*$", "", code, flags=_re.MULTILINE)
+
+    # st.frequency(...) → st.one_of(...) with equal weights (safest fallback)
+    # Pattern: st.frequency( (w1, strat1), (w2, strat2), ... )
+    # We need to strip the weight tuples and keep only the strategy expressions.
+    if "st.frequency" in code:
+        idx = code.index("st.frequency")
+        # Find opening paren
+        start = idx + len("st.frequency")
+        while start < len(code) and code[start] in " \t\n":
+            start += 1
+        assert code[start] == "(", f"Expected '(' after st.frequency, got {code[start]!r}"
+        # Find matching closing paren
+        depth = 0
+        end = start
+        for j in range(start, len(code)):
+            if code[j] == "(":
+                depth += 1
+            elif code[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        inner = code[start + 1 : end]
+        # Split on top-level commas (respecting nested parens/brackets/braces)
+        args: list[str] = []
+        depth = 0
+        current: list[str] = []
+        for ch in inner:
+            if ch in "([{":
+                depth += 1
+                current.append(ch)
+            elif ch in ")]}":
+                depth -= 1
+                current.append(ch)
+            elif ch == "," and depth == 0:
+                args.append("".join(current).strip())
+                current = []
+            else:
+                current.append(ch)
+        if current:
+            args.append("".join(current).strip())
+        # Strip weight tuples: "(82, well_formed_document())" → "well_formed_document()"
+        cleaned: list[str] = []
+        for arg in args:
+            # Match leading "(NUMBER, " and trailing ")"
+            m = _re.match(r"^\(\s*\d+\s*,\s*(.+)\)\s*$", arg)
+            if m:
+                cleaned.append(m.group(1).strip())
+            else:
+                cleaned.append(arg)
+        replacement = "st.one_of(\n    " + ",\n    ".join(cleaned) + "\n)"
+        code = code[:idx] + replacement + code[end + 1 :]
+
+    return code
+
+
 def execute_strategy(
     strategy_code: str,
     num_examples: int = 200,
@@ -100,6 +168,9 @@ def execute_strategy(
         acceptance_rate, examples — list of (input_text, code, label) tuples
     """
     harness_run = _import_run_harness()
+
+    # Fix common LLM-generated errors before writing to disk
+    strategy_code = _fix_common_llm_errors(strategy_code)
 
     # Write strategy to a temp module so we can import it
     import tempfile
@@ -174,6 +245,9 @@ def execute_strategy(
                             queue.append(inner)
                     except ValueError:
                         pass
+            # Also check __wrapped__ (used by some decorators)
+            if hasattr(fn, "__wrapped__") and callable(getattr(fn, "__wrapped__", None)):
+                queue.append(fn.__wrapped__)
         return candidate
 
     def _generate_one():
@@ -181,10 +255,20 @@ def execute_strategy(
         # (has .example()). For composites, extract the original draw-taking
         # function via closure walk and build a CompositeStrategy directly.
         try:
-            if callable(xml_strategy) and not hasattr(xml_strategy, "example"):
+            # Case 1: it's a proper SearchStrategy with .example()
+            if hasattr(xml_strategy, "example"):
+                return xml_strategy.example()
+            # Case 2: it's a @st.composite wrapped function — unwrap and build
+            # a CompositeStrategy from the inner draw-taking function
+            if callable(xml_strategy):
                 inner = _unwrap_composite(xml_strategy)
-                return CompositeStrategy(inner, (), {}).example()
-            return xml_strategy.example()
+                if inner is not xml_strategy:  # we found an inner function
+                    return CompositeStrategy(inner, (), {}).example()
+            # Case 3: it's something else unexpected
+            raise TypeError(
+                f"xml_strategy is {type(xml_strategy).__name__}, "
+                f"expected SearchStrategy or @st.composite function"
+            )
         except Exception:
             return None
 
@@ -192,6 +276,13 @@ def execute_strategy(
     for counter in range(num_examples):
         example = _generate_one()
         if example is None:
+            continue
+        # Some Hypothesis examples contain lone surrogate code points which
+        # cannot be encoded as UTF-8. Skip them — they're never useful for
+        # hitting mxml and would silently kill the loop.
+        try:
+            example.encode("utf-8")
+        except (UnicodeEncodeError, AttributeError):
             continue
 
         code, label = harness_run(example)
