@@ -76,8 +76,8 @@ def run_once_str(text: str) -> tuple[int, str]:
 
 _TAG_OPEN = re.compile(r"<[a-zA-Z_][a-zA-Z0-9_:.]*")
 _TAG_CLOSE = re.compile(r"</[a-zA-Z_][a-zA-Z0-9_:.]*\s*>")
-_ATTR = re.compile(r'\s+[a-zA-Z_][a-zA-Z0-9_:.]*\s*=\s*"([^"]*)"')
-_ATTR_SINGLE = re.compile(r"\s+[a-zA-Z_][a-zA-Z0-9_:.]*\s*=\s*'([^']*)'")
+_ATTR = re.compile(r'\s+([a-zA-Z_][a-zA-Z0-9_:.]*)\s*=\s*"([^"]*)"')
+_ATTR_SINGLE = re.compile(r"\s+([a-zA-Z_][a-zA-Z0-9_:.]*)\s*=\s*'([^']*)'")
 _ATTR_UNQUOTED = re.compile(r"\s+([a-zA-Z_][a-zA-Z0-9_:.]*)\s*=\s*([^\s>]+)")
 
 

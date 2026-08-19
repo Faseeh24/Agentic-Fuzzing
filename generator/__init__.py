@@ -1,1 +1,1 @@
-"""generator — deterministic Hypothesis strategy compilation from JSON specs."""
+"""generator — AST validation and loading of LLM-authored Hypothesis strategies."""

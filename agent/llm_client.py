@@ -17,7 +17,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+_DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 
 def _load_env() -> None:
@@ -75,8 +75,13 @@ class LLMClient:
         payload = {
             "model": self._model,
             "messages": messages,
-            "max_tokens": 4096,
+            "max_tokens": 2048,
         }
+        # Reasoning models (gpt-oss, qwen3) spend chain-of-thought tokens by
+        # default and can return an EMPTY "content" when reasoning eats the
+        # whole budget. Cap the thinking so the strategy code is always emitted.
+        if "gpt-oss" in self._model or "qwen3" in self._model:
+            payload["reasoning_effort"] = "low"
 
         logger.info("Sending request to Groq (model=%s)", self._model)
         resp = httpx.post(self._api_url, json=payload, headers=headers, timeout=timeout)

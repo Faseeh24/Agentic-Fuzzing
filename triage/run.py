@@ -4,7 +4,7 @@ triage/run.py — main triage pipeline entry point.
 
 After the agentic loop produces crash candidates (exit codes 3, 4, 5),
 this module:
-  1. Collects all crash inputs from the iteration logs.
+  1. Collects all crash inputs from the iteration logs (including real stderr).
   2. Deduplicates them by normalized crash signature.
   3. Saves each unique signature to ``triage/crashes/{sig}/``.
   4. Minimizes each reproducer using Hypothesis.
@@ -62,11 +62,11 @@ def collect_crashes_from_logs(logs_dir: Path) -> list[dict[str, Any]]:
     crash example (codes 3, 4, 5).
 
     The agentic loop writes ``examples`` as a list of dicts
-    ``{input, code, label}`` (or older records may use 3-tuples). Both shapes
-    are supported here.
+    ``{input, code, label, stderr}`` (stderr captured live during fuzzing).
+    Both shapes are supported here.
 
     Returns a list of dicts:
-        {input, code, label, iteration}
+        {input, code, label, stderr, iteration}
     """
     crashes: list[dict[str, Any]] = []
     if not logs_dir.exists():
@@ -84,27 +84,34 @@ def collect_crashes_from_logs(logs_dir: Path) -> list[dict[str, Any]]:
                     input_text = ex.get("input", "")
                     code = ex.get("code", 0)
                     label = ex.get("label", "")
+                    stderr_text = ex.get("stderr", "")
                 else:
-                    # Legacy 3-tuple shape
-                    input_text, code, label = ex[0], ex[1], ex[2]
+                    # Legacy 3-tuple or 4-tuple shape
+                    if len(ex) >= 4:
+                        input_text, code, label, stderr_text = ex[0], ex[1], ex[2], ex[3]
+                    else:
+                        input_text, code, label = ex[0], ex[1], ex[2]
+                        stderr_text = ""
                 if code in (3, 4, 5):
                     crashes.append({
                         "input": input_text,
                         "code": code,
                         "label": label,
+                        "stderr": stderr_text,
                         "iteration": iteration,
-                        "stderr": "",  # captured live into triage/crashes/<sig>/
                     })
     return crashes
 
 
 # ---------------------------------------------------------------------------
-# Full crash run (with stderr capture)
+# Full crash run (with stderr capture) - used as fallback only
 # ---------------------------------------------------------------------------
+
 
 def _run_with_stderr(input_text: str) -> tuple[int, str, str]:
     """
     Run the harness and return (exit_code, label, stderr_text).
+    Used only as fallback when logs don't contain stderr.
     """
     import subprocess
     harness = str(ROOT / "harness" / "mxml_harness")
@@ -115,8 +122,9 @@ def _run_with_stderr(input_text: str) -> tuple[int, str, str]:
             capture_output=True,
             timeout=5,
         )
-    except subprocess.TimeoutExpired:
-        return 4, "timeout", result.stderr.decode("utf-8", errors="replace") if hasattr(result, 'stderr') else ""
+    except subprocess.TimeoutExpired as exc:
+        stderr_text = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
+        return 4, "timeout", stderr_text
 
     stderr_text = result.stderr.decode("utf-8", errors="replace")
     stderr_lower = stderr_text.lower()
@@ -185,8 +193,8 @@ def run_triage(
                     "input": c.get("input_text", ""),
                     "code": c["code"],
                     "label": c["signal_name"],
-                    "iteration": 0,
                     "stderr": c.get("stderr_text", ""),
+                    "iteration": 0,
                 }
                 for c in existing
             ]
@@ -208,7 +216,7 @@ def run_triage(
         canonical = sig_crashes[0]
         stderr_text = canonical.get("stderr", "")
         if not stderr_text:
-            # Re-run with stderr capture
+            # Re-run with stderr capture as fallback
             _, _, stderr_text = _run_with_stderr(canonical["input"])
         dedupe.save_crash_record(
             crash_dir=crash_dir,

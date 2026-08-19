@@ -1,9 +1,9 @@
 # Agentic-Fuzzing
 
-A coverage-guided, LLM-driven fuzzing pipeline targeting the **Mini-XML (mxml)** C library.
+A **blackbox**, LLM-driven agentic fuzzing pipeline targeting the **Mini-XML (mxml)** C library — no coverage instrumentation drives generation; refinement is steered by parser acceptance rate and crash signatures.
 
 ```
-LLM (Groq) → JSON Strategy Spec → Deterministic Generator → Hypothesis Strategy
+LLM (Groq) → Python Hypothesis Strategy (st.recursive/@composite) → Hypothesis
                                                     ↓
                                             C Harness (ASan/UBSan)
                                                     ↓
@@ -15,10 +15,9 @@ LLM (Groq) → JSON Strategy Spec → Deterministic Generator → Hypothesis Str
 | Module | Purpose |
 |--------|---------|
 | `agent/` | LLM client (Groq), strategy planner, orchestrator loop |
-| `generator/` | Pydantic strategy spec + deterministic Hypothesis compiler |
-| `coverage/` | Coverage collection (LLVM/gcov — stub for now) |
-| `engine/` | Fuzzing execution engine with feedback collection |
-| `fuzzer/` | Baseline strategies, harness wrapper, legacy baseline |
+| `generator/` | AST validator + loader for LLM-authored Python strategies |
+| `engine/` | Fuzzing execution engine (placeholder) |
+| `fuzzer/` | Harness wrapper, baseline + fallback strategies |
 | `harness/` | C harness (mxmlLoadString, ASan/UBSan instrumented) |
 | `grammar/` | ANTLR grammar reference + mxml-specific rules |
 | `triage/` | Crash deduplication, minimization, verification |
@@ -73,13 +72,13 @@ cp .env.example .env
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `GROQ_API_KEY` | **Required.** Your Groq API key | — |
-| `GROQ_MODEL` | Model to use (auto-selects if empty) | `llama-3.3-70b-versatile` |
+| `GROQ_MODEL` | Model to use (auto-selects if empty) | `openai/gpt-oss-20b` |
 | `MAX_ITERATIONS` | Agentic loop iterations | `5` |
 | `NUM_EXAMPLES` | Examples per iteration | `200` |
 | `WALL_CLOCK_CAP` | Time limit in seconds | `600` |
 | `COST_BUDGET` | LLM cost budget in USD | `5.0` |
-| `HARNESS_TIMEOUT` | Per-input timeout (seconds) | `5` |
-| `COVERAGE_ENABLED` | Enable coverage collection | `true` |
+
+> **Note:** `.env` values override all hardcoded defaults. The CLI flags use `.env` values as their defaults (see `orchestrator.py`).
 
 ## Running
 
@@ -123,10 +122,10 @@ python -m triage.run
 ```
 python -m agent.orchestrator [OPTIONS]
 
-  --max-iterations INT       Max refine cycles (default: 5)
-  --num-examples INT         Examples per iteration (default: 200)
-  --wall-clock-cap FLOAT     Wall-clock cap in seconds (default: 600)
-  --cost-budget FLOAT        Cost budget in USD (default: 5.0)
+  --max-iterations INT       Max refine cycles (default: from $MAX_ITERATIONS or 5)
+  --num-examples INT         Examples per iteration (default: from $NUM_EXAMPLES or 200)
+  --wall-clock-cap FLOAT     Wall-clock cap in seconds (default: from $WALL_CLOCK_CAP or 600)
+  --cost-budget FLOAT        Cost budget in USD (default: from $COST_BUDGET or 5.0)
   --no-triage                Skip crash triage after loop
 ```
 
@@ -134,33 +133,29 @@ python -m agent.orchestrator [OPTIONS]
 
 | Path | Description |
 |------|-------------|
-| `fuzzer/logs/iteration_*.jsonl` | Per-iteration JSONL logs |
+| `fuzzer/logs/iteration_*.jsonl` | Per-iteration JSONL logs (includes real stderr) |
 | `fuzzer/logs/loop_summary.md` | Human-readable loop summary |
-| `fuzzer/strategies/iteration_*.json` | Strategy specs (JSON) |
+| `fuzzer/strategies/iteration_*.py` | **LLM-generated Python Hypothesis strategies** |
 | `triage/crashes/<sig>/` | Deduplicated crash records |
 | `triage/crashes/<sig>/reproducer_minimized.xml` | Minimized reproducer |
 | `triage/crashes/<sig>/meta.json` | Crash metadata |
-| `coverage/summary.json` | Coverage statistics |
 
 ## How It Works
 
 ### 1. Strategy Planning (LLM)
 
-The LLM generates a **JSON strategy specification** describing:
-- Objectives (what to cover: CDATA, nesting, entities, etc.)
-- Constraints (max depth, entity whitelist, control char filtering)
-- Mutations (probability of deliberate break patterns)
+The LLM **directly generates a Python file** defining a module-level `xml_strategy` using `hypothesis.strategies.recursive` and `@composite` for recursive grammar productions. This strategy file is itself a required deliverable and graded artifact.
 
-### 2. Deterministic Generation
+The LLM output is **not executed blindly** — before loading, an AST-based static validator (`generator/strategy_validator.py`) checks that the file:
+- Only imports from `hypothesis.strategies`, `string`, `random`
+- Defines a module-level `xml_strategy`
+- Contains no top-level side-effecting calls (I/O, subprocess, eval, etc.)
 
-The spec is compiled into a **Hypothesis SearchStrategy** by a fixed, auditable
-Python module. The LLM never writes or executes Python code — it only produces
-structured JSON.
+Only after passing this AST check is the file `exec()`-ed in a restricted namespace.
 
-### 3. Fuzzing Engine
+### 2. Fuzzing Engine
 
-The Hypothesis strategy generates XML inputs, which are fed to the C harness.
-The harness classifies each input into one of six categories:
+The Hypothesis strategy generates XML inputs, which are fed to the C harness. The harness classifies each input into one of six categories:
 
 | Code | Category | Meaning |
 |------|----------|---------|
@@ -171,21 +166,45 @@ The harness classifies each input into one of six categories:
 | 4 | timeout | Input exceeded timeout |
 | 5 | bug_crash | Unexpected crash |
 
+**Real stderr is captured at fuzzing time** and written to the JSONL logs, so crash signatures can be computed from actual ASan/UBSan stack traces without re-running.
+
+### 3. Blackbox Proxy Signals (No Coverage Instrumentation)
+
+Per the assignment constraints, this is a **blackbox fuzzer** — no coverage-guided mutation, no instrumentation beyond sanitizers. Refinement is steered by two proxy signals computed from the raw fuzzing output:
+
+1. **Parser acceptance rate** — ratio of valid parses to total inputs
+2. **Crash signatures** — normalized ASan/UBSan stack traces (or structural fallback for timeouts)
+
+These are the *only* signals the orchestrator feeds back to the LLM for refinement.
+
 ### 4. Crash Triage
 
 Crashes are:
-1. **Deduplicated** by normalized signature
+1. **Deduplicated** by normalized signature (computed exactly once, from real stderr)
 2. **Minimized** using Hypothesis
 3. **Verified** for deterministic reproduction
 
+If a signature directory already exists, the new reproducer is compared against the existing one — shorter (better minimized) versions replace the original; others are stored as variants in `triage/crashes/<sig>/reproducers/` rather than silently overwriting.
+
+## Blackbox Fuzzer — Design Clarification
+
+This is a **blackbox fuzzer per the assignment's constraints**. Coverage is **never** used to steer generation. The proxy signals (parser acceptance rate and crash signatures) are the intentional substitute for coverage feedback.
+
 ## Key Design Decisions
 
-1. **No LLM-generated code execution** — The LLM only produces JSON; the generator is fixed and auditable.
+1. **LLM authors Hypothesis code directly; AST validator gates execution** — The LLM produces a full Python strategy file using `st.recursive`/`@composite`. An AST-based static validator (`generator/strategy_validator.py`) rejects unsafe imports, missing `xml_strategy`, or side-effecting calls before the file is loaded in a restricted namespace. This is a deliberate tradeoff: it gives the LLM full expressive power while maintaining a safety boundary that is auditable and reviewable.
+
 2. **Groq-only** — Simplifies configuration, removes fallback complexity.
+
 3. **Explicit pipeline states** — Failures are visible, not hidden.
-4. **Structured crash reporting** — Exit code, signal, and stderr captured separately.
+
+4. **Structured crash reporting** — Exit code, signal, and stderr captured separately at fuzzing time.
+
 5. **Harness bug fix** — `ferror()` checked before `fclose()` to avoid use-after-close.
+
 6. **Real grammar reference** — All rules consolidated in `grammar/GRAMMAR_RULES.md`.
+
+7. **Robust LLM strategy production** — The LLM's output is validated with an AST checker **and** actually loaded + sample-generated before it is used. If the model produces an unusable strategy (empty reply, hallucinated API, misused `st.recursive`), the orchestrator falls back to a bundled known-good strategy (`fuzzer/fallback_strategy.py`) so the loop still runs. The LLM client also caps chain-of-thought for reasoning models (`reasoning_effort=low` for GPT-OSS/Qwen) so that a strategy is always emitted instead of an empty `content`.
 
 ## License
 

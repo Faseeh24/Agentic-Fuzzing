@@ -29,8 +29,11 @@ import hashlib
 import json
 import re
 import sys
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Regex for extracting stack frames from ASan / UBSan output
@@ -66,12 +69,6 @@ NOISY_FRAMES = {
     "_start",
     "__interceptor_realloc",
     "realloc",
-    "__sanitizer_cov_trace_const_cmp1",
-    "__sanitizer_cov_trace_const_cmp2",
-    "__sanitizer_cov_trace_const_cmp4",
-    "__sanitizer_cov_trace_const_cmp8",
-    "__asan_region_is_poisoned",
-    "__lsan_maybe_reachable",
 }
 
 # ---------------------------------------------------------------------------
@@ -119,10 +116,8 @@ def _structural_hash(input_text: str) -> str:
     This is intentionally coarse — the goal is to group *similar* pathological
     inputs, not to produce a unique fingerprint.
     """
-    import re as _re
-
     # Nesting depth: count '<' that start a tag
-    open_tags = len(_re.findall(r"<[a-zA-Z/!?]", input_text))
+    open_tags = len(re.findall(r"<[a-zA-Z/!?]", input_text))
     # Length bucket
     blen = len(input_text.encode("utf-8"))
     if blen < 100:
@@ -169,20 +164,31 @@ def signature_for(
     """
     Return a 16-character hex crash signature for the given stderr / signal.
 
+    Signature computation happens exactly once, from real stderr data.
     - If a real stack trace is present, hash the normalized frames.
     - If it's a bare timeout (or stripped binary with no frames), fall back
       to a structural hash of the input so similar timeouts group together.
+      In this case, log clearly that a fallback was used.
     """
     frames = normalize_stack(stderr_text)
     if frames:
         basis = "|".join(frames)
     else:
         # No usable stack — use signal name + structural input hash
-        if input_text is not None:
+        if input_text is not None and input_text.strip():
             struct_hash = _structural_hash(input_text)
+            basis = f"{signal_name or 'unknown'}|struct={struct_hash}"
+            logger.warning(
+                "No stack trace found for crash; using input-structure fallback. "
+                "This signature is weaker than a real stack-based one."
+            )
         else:
             struct_hash = "unknown"
-        basis = f"{signal_name or 'unknown'}|struct={struct_hash}"
+            basis = f"{signal_name or 'unknown'}|struct={struct_hash}"
+            logger.warning(
+                "No stack trace and no input text for crash signature; "
+                "using minimal fallback."
+            )
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
 
 
@@ -259,15 +265,60 @@ def save_crash_record(
     """
     Save a single crash record into its signature-named directory.
 
-    Returns the path to the directory created.
+    If the signature directory already exists, checks whether the new
+    reproducer is meaningfully different (e.g. shorter after minimization)
+    before deciding to replace or store as an additional variant.
+
+    Returns the path to the directory created/used.
     """
     sig = signature_for(stderr_text, signal_name, input_text)
     sig_dir = crash_dir / sig
-    sig_dir.mkdir(parents=True, exist_ok=True)
-    (sig_dir / "sanitizer_report.txt").write_text(stderr_text, encoding="utf-8")
-    (sig_dir / "reproducer.xml").write_text(input_text, encoding="utf-8")
-    meta = {"signal": signal_name, "code": code, "timed_out": code == 4}
-    (sig_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    if sig_dir.exists():
+        existing_repro = sig_dir / "reproducer.xml"
+        if existing_repro.exists():
+            existing_text = existing_repro.read_text(encoding="utf-8")
+            # If the new reproducer is shorter, it's likely a better (minimized) version
+            if len(input_text) < len(existing_text):
+                logger.info(
+                    "Signature %s already exists; replacing reproducer "
+                    "(new %d chars < existing %d chars)",
+                    sig, len(input_text), len(existing_text),
+                )
+                existing_repro.write_text(input_text, encoding="utf-8")
+                (sig_dir / "sanitizer_report.txt").write_text(
+                    stderr_text, encoding="utf-8"
+                )
+                meta = {"signal": signal_name, "code": code, "timed_out": code == 4}
+                (sig_dir / "meta.json").write_text(
+                    json.dumps(meta, indent=2), encoding="utf-8"
+                )
+            else:
+                # Store as additional reproducer variant instead of overwriting
+                repro_dir = sig_dir / "reproducers"
+                repro_dir.mkdir(exist_ok=True)
+                variant_idx = len(list(repro_dir.glob("*.xml"))) + 1
+                variant_path = repro_dir / f"reproducer_{variant_idx:03d}.xml"
+                logger.info(
+                    "Signature %s already exists; saving new reproducer "
+                    "(%d chars) as variant %s",
+                    sig, len(input_text), variant_path.name,
+                )
+                variant_path.write_text(input_text, encoding="utf-8")
+        else:
+            # Directory exists but no reproducer yet — write it
+            sig_dir.mkdir(parents=True, exist_ok=True)
+            (sig_dir / "sanitizer_report.txt").write_text(stderr_text, encoding="utf-8")
+            (sig_dir / "reproducer.xml").write_text(input_text, encoding="utf-8")
+            meta = {"signal": signal_name, "code": code, "timed_out": code == 4}
+            (sig_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    else:
+        sig_dir.mkdir(parents=True, exist_ok=True)
+        (sig_dir / "sanitizer_report.txt").write_text(stderr_text, encoding="utf-8")
+        (sig_dir / "reproducer.xml").write_text(input_text, encoding="utf-8")
+        meta = {"signal": signal_name, "code": code, "timed_out": code == 4}
+        (sig_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
     return sig_dir
 
 
@@ -290,7 +341,7 @@ def deduplicate(crashes: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]
     for c in crashes:
         sig = signature_for(
             c.get("stderr", ""),
-            c.get("signal_name"),
+            c.get("label"),  # Use label as signal_name
             c.get("input", ""),
         )
         groups.setdefault(sig, []).append(c)

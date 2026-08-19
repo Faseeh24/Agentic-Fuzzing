@@ -1,8 +1,9 @@
 """
-agent/tools.py — 提供给 LLM 代理的工具接口。
+agent/tools.py — tool interface provided to the LLM agent.
 
-每个工具返回结构化数据，LLM 可据此做出决策。
-工具由 Orchestrator 调用，而非直接由 LLM 调用（避免工具调用开销）。
+Each tool returns structured data the LLM can use to make decisions.
+Tools are invoked by the Orchestrator, not directly by the LLM (this avoids
+tool-call overhead).
 """
 
 from __future__ import annotations
@@ -14,8 +15,8 @@ from typing import Any
 
 def analyze_target() -> dict[str, Any]:
     """
-    分析目标库 (mxml)。
-    返回：函数签名、节点类型、编码支持。
+    Analyze the target library (mxml).
+    Returns: function signatures, node types, and encoding support.
     """
     return {
         "target": "mxml",
@@ -43,42 +44,25 @@ def analyze_target() -> dict[str, Any]:
 
 def get_grammar() -> dict[str, Any]:
     """
-    返回与 mxml 解析相关的 ANTLR 语法规则。
+    Return the ANTLR grammar rules relevant to mxml parsing.
     """
     grammar_dir = Path(__file__).resolve().parent.parent / "grammar"
 
     parser_path = grammar_dir / "original" / "XMLParser.g4"
     lexer_path = grammar_dir / "original" / "XMLLexer.g4"
-    adaptations_path = grammar_dir / "ADAPTATIONS.md"
 
     parser = parser_path.read_text(encoding="utf-8") if parser_path.exists() else ""
     lexer = lexer_path.read_text(encoding="utf-8") if lexer_path.exists() else ""
-    adaptations = adaptations_path.read_text(encoding="utf-8") if adaptations_path.exists() else ""
 
     return {
         "parser": parser,
         "lexer": lexer,
-        "adaptations": adaptations,
-    }
-
-
-def get_coverage_stats() -> dict[str, Any]:
-    """
-    返回当前覆盖率统计信息。
-    """
-    # 占位符 — 将在后续实现中连接 coverage/collector.py
-    return {
-        "total_lines": 0,
-        "covered_lines": 0,
-        "coverage_pct": 0.0,
-        "new_edges": 0,
-        "total_edges": 0,
     }
 
 
 def get_crash_signatures() -> list[dict[str, Any]]:
     """
-    返回迄今为止找到的唯一崩溃签名。
+    Return the unique crash signatures found so far.
     """
     crash_dir = Path(__file__).resolve().parent.parent / "triage" / "crashes"
     if not crash_dir.exists():
@@ -102,7 +86,7 @@ def get_crash_signatures() -> list[dict[str, Any]]:
 
 def get_iteration_history() -> list[dict[str, Any]]:
     """
-    返回上一轮迭代的历史记录，供上下文参考。
+    Return the iteration history from previous rounds, for context.
     """
     logs_dir = Path(__file__).resolve().parent.parent / "fuzzer" / "logs"
     if not logs_dir.exists():
@@ -118,18 +102,18 @@ def get_iteration_history() -> list[dict[str, Any]]:
 
 def get_strategy_logs() -> list[dict[str, Any]]:
     """
-    返回已保存的策略规范历史。
+    Return the saved strategy source history.
     """
     strategies_dir = Path(__file__).resolve().parent.parent / "fuzzer" / "strategies"
     if not strategies_dir.exists():
         return []
 
     strategies = []
-    for f in sorted(strategies_dir.glob("*.json")):
+    for f in sorted(strategies_dir.glob("*.py")):
         strategies.append(
             {
                 "filename": f.name,
-                "content": json.loads(f.read_text(encoding="utf-8")),
+                "content": f.read_text(encoding="utf-8"),
             }
         )
     return strategies

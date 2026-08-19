@@ -2,7 +2,7 @@
 """
 baseline_strategy.py — baseline fuzzer strategy.
 
-Generates a固定 set of valid and invalid XML inputs to verify that the
+Generates a fixed set of valid and invalid XML inputs to verify that the
 fuzzer pipeline plumbing works end-to-end. This strategy does NOT attempt
 to find bugs; it only confirms that inputs flow through the harness and
 results are correctly classified.

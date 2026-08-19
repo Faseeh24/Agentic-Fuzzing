@@ -14,17 +14,15 @@ The target is **Mini-XML (mxml)**, a small C library for parsing and manipulatin
 
 The grammar source is the ANTLR4 reference XML grammar. Rather than using it as strict production rules, we treat it as a **structural reference** — it tells us what shape valid XML takes (elements, attributes, entities, CDATA, comments, processing instructions, DTDs) but not the exact subset mxml accepts.
 
-### Adaptations
+### Grammar Rules
 
 The key insight of this project is that the ANTLR grammar describes **generic XML**, while mxml accepts a **strictly smaller dialect**. Feeding the fuzzer generic-XML generators would produce inputs that mxml rejects at the front door, wasting 100% of the fuzzing budget on well-formedness checks rather than exercising parsing code paths.
 
-To solve this, we built `grammar/ADAPTATIONS.md` — a source-verified comparison of the ANTLR grammar against mxml's actual accepted input format. It documents:
+To solve this, we built `grammar/GRAMMAR_RULES.md` — a source-verified comparison of the ANTLR grammar against mxml's actual accepted input format, used as reference material for the LLM. It documents:
 
 - **Verified constraints**: entity references (only 5 names accepted), control character rules, UTF-8/BOM behavior, comment/CDATA terminators.
 - **Permissive areas**: element/attribute names (mxml is looser than the grammar), attribute quoting (both quoted and unquoted accepted).
 - **Generator practices**: what to vary freely vs. what to constrain.
-
-This adaptations file is loaded into the LLM as reference material during strategy generation, so the LLM knows exactly which rules are soft vs. hard for mxml.
 
 ### Harness and Classification
 
@@ -43,13 +41,12 @@ The binary is built with `-fsanitize=address,undefined` so memory errors and und
 
 ### Agentic Loop
 
-The agentic loop (`fuzzer/agentic_loop.py`) iteratively generates and refines a Hypothesis strategy using an LLM. Each iteration:
+The agentic loop (`agent/orchestrator.py`) iteratively generates and refines a Hypothesis strategy using an LLM. Each iteration:
 
 1. **Generate/refine**: The LLM produces a Python module exporting an `xml_strategy` — a `@st.composite` strategy that generates XML strings using recursive productions (`st.recursive`, nested `@composite` functions).
 2. **Execute**: The strategy is run against the harness for a bounded number of examples (default 200, capped at 500 per the assignment).
 3. **Signal extraction**: Proxy signals are computed:
    - **Acceptance rate** — fraction accepted by mxml (code 0).
-   - **Grammar coverage** — regex-based detection of which grammar productions appear in the corpus.
    - **Crash signatures** — unique sanitizer/timeout/bug inputs.
 4. **Log**: Each iteration is appended to `fuzzer/logs/iteration_N.jsonl`.
 5. **Refine**: The LLM receives the current strategy plus the summary and is asked to revise it — steering toward under-explored productions and crash-adjacent inputs.
@@ -120,10 +117,10 @@ The refine prompt addresses this by explicitly telling the LLM to check low acce
 
 ## Artifacts
 
-- **Grammar + adaptations**: `grammar/original/`, `grammar/ADAPTATIONS.md`
+- **Grammar reference**: `grammar/original/`, `grammar/GRAMMAR_RULES.md`
 - **Build script + harness**: `harness/Makefile`, `harness/mxml_harness.c`
 - **Baseline strategy**: `fuzzer/baseline_strategy.py`
-- **Agentic loop**: `fuzzer/agentic_loop.py`, `fuzzer/llm_client.py`
+- **Agentic loop**: `agent/orchestrator.py`, `agent/llm_client.py`
 - **Iteration log**: `fuzzer/logs/iteration_N.jsonl`
 - **Final strategy**: `fuzzer/strategies/iteration_N[_refined].py`
 - **Crash reports**: `triage/crashes/{signature}/` (or empty with explanation)

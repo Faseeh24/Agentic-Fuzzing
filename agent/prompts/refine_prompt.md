@@ -1,47 +1,54 @@
-# 优化策略提示词
+# Strategy Refinement Prompt
 
-## 上一轮策略
+## Previous strategy code
 
-{prev_spec}
+{prev_strategy}
 
-## 上一轮执行结果
+## Previous iteration results
 
 {prev_summary}
 
-## 覆盖率反馈
-
-{coverage_feedback}
-
-## 现有崩溃签名
+## Existing crash signatures
 
 {crash_sigs}
 
-## 你的任务
+## Your task
 
-根据以上信息优化策略规范。考虑：
+Based on the information above, **rewrite the complete Python strategy module**
+and improve the `xml_strategy` definition. Consider:
 
-- 如果接受率低，收紧约束条件
-- 如果故意破坏未产生崩溃，增加其概率
-- 如果覆盖率低，添加针对未覆盖区域的 objectives
-- 如果发现崩溃，生成附近的变体输入
-- 保持有效测试与破坏性测试的平衡
+- If the acceptance rate is low, adjust the constraints (depth, size limits)
+- If deliberately malformed inputs did not produce crashes, increase their
+  proportion
+- If crashes were found, generate nearby variant inputs
+- Keep a balanced mix of valid and malformed tests
 
-## 输出格式
+## Output format — IMPORTANT
 
-仅输出优化后的 JSON 策略规范，结构与种子提示词相同：
+Output **ONLY** the complete Python source file. Do **NOT** wrap the code in
+markdown fences (no triple backticks) and do not include any prose. The module
+must:
 
-```json
-{
-  "target": "mxmlLoadString",
-  "objectives": [...],
-  "constraints": [...],
-  "mutations": [...]
-}
-```
+1. Contain all required `import` statements
+2. Define all sub-strategy helper functions (private, names starting with `_`)
+3. Define a plain **module-level assignment** `xml_strategy = <SearchStrategy>`
 
-## 规则
+`xml_strategy` MUST be a module-level assignment. Do not define it as a
+function, do not nest it inside a function, and do not return it.
 
-1. 仅输出有效 JSON，不使用 markdown 代码块
-2. mutations 的 probability 总和应接近 1.0
-3. 根据反馈调整权重和优先级
-4. 保持至少 3 个 objectives 和 3 个 constraints
+## Rules
+
+1. Only valid Python code — no markdown code fences, no prose.
+2. Import only `hypothesis.strategies`, `string`, `random`.
+3. Ensure `xml_strategy` is a module-level variable, initialized with a plain
+   assignment — never defined inside a function and returned.
+4. No I/O, file operations, or system calls.
+5. The strategy must produce `str` XML text.
+
+## Recursion rule (critical)
+
+For `st.recursive(base=..., extend=..., ...)`, the `extend` argument must be a
+**callable** `lambda children: <strategy>`. It receives a strategy object for
+recursive/nested children and must return a new strategy. Never pass a strategy
+object directly as `extend`, and never call a strategy object as a function —
+Hypothesis raises `TypeError: 'LazyStrategy' object is not callable`.

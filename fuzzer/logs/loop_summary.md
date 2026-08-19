@@ -1,18 +1,21 @@
 # Agentic Loop Summary
 
-**State:** CRASH_FOUND
+**State:** PIPELINE_SUCCESS
 
-**Iterations:** 7
+**Iterations:** 1
 
 **LLM provider:** groq
 
-**Wall-clock:** 8.0s
+**Wall-clock:** 22.6s
 
-**Total examples:** 40
+**Total examples:** 10
 
-**Crashes found:** 5
+**Crashes found:** 0
+
+## Strategy Files
+
+- `iteration_0000.py`
 
 ## Log Files
 
 - `iteration_0001.jsonl`
-- `iteration_0002.jsonl`
