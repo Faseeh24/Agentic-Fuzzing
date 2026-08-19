@@ -117,11 +117,13 @@ def _parse_elements(text: str) -> list[dict[str, Any]]:
         if j >= len(text):
             break
         inner = text[start:j + 1]
+        
+        attrs = []
+        for pat in (_ATTR, _ATTR_SINGLE, _ATTR_UNQUOTED):
+            attrs.extend(pat.findall(inner))
+
         # Self-closing?
         if inner.rstrip().endswith("/>"):
-            attrs = []
-            for pat in (_ATTR, _ATTR_SINGLE, _ATTR_UNQUOTED):
-                attrs.extend(pat.findall(inner))
             elements.append({
                 "tag": tag,
                 "attrs": attrs,
@@ -230,7 +232,7 @@ def _sub_document_strategy(original: str):
                     result = result.replace(old, new, 1)
         return result or original
 
-    return _inner
+    return _inner()
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +264,7 @@ def minimize_reproducer(
     (minimal_input, final_code)
         The shrunk reproducer and its classification code.
     """
-    from hypothesis import given, settings, Phase
+    from hypothesis import given, settings, Phase, Verbosity
 
     original_code, _ = run_once_str(original_input)
     if original_code != expected_code:
@@ -277,7 +279,7 @@ def minimize_reproducer(
         max_examples=max_examples,
         deadline=None,
         phases=[Phase.generate, Phase.shrink],
-        verbosity=2,
+        verbosity=Verbosity.verbose,
     )
     @given(sub_doc)
     def _shrink_target(candidate: str) -> None:

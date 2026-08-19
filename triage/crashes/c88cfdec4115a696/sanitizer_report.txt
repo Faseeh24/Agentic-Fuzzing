@@ -1,0 +1,19 @@
+mxml parse error: Bad control character 0x01 not allowed by XML standard.
+mxml parse error: Missing value for attribute 'W"' in element gH on line 1.
+
+=================================================================
+==93==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 88 byte(s) in 1 object(s) allocated from:
+    #0 0x7bfd52791610 in calloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:77
+    #1 0x6497edd36e26 in mxml_new ../target/mxml/mxml-node.c:931
+
+Indirect leak of 256 byte(s) in 1 object(s) allocated from:
+    #0 0x7bfd52790b58 in realloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:85
+    #1 0x6497edd38be8 in mxml_set_attr ../target/mxml/mxml-attr.c:255
+
+Indirect leak of 28 byte(s) in 7 object(s) allocated from:
+    #0 0x7bfd5278bd60 in strdup ../../../../src/libsanitizer/asan/asan_interceptors.cpp:578
+    #1 0x6497edd42c1b in _mxml_strcopy ../target/mxml/mxml-private.c:99
+
+SUMMARY: AddressSanitizer: 372 byte(s) leaked in 9 allocation(s).

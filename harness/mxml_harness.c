@@ -65,9 +65,11 @@ static char *read_input(const char *path, int *err_out)
         }
     }
 
+    int read_error = ferror(fp);
+
     if (path) fclose(fp);
 
-    if (ferror(fp)) {
+    if (read_error) {
         fprintf(stderr, "harness: read error\n");
         free(buffer);
         *err_out = 2;

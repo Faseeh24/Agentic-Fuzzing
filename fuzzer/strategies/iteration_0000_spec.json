@@ -1,0 +1,84 @@
+{
+  "target": "mxmlLoadString",
+  "objectives": [
+    {
+      "name": "Generate fully valid XML documents",
+      "priority": 5
+    },
+    {
+      "name": "Generate destructive test cases with high coverage",
+      "priority": 4
+    },
+    {
+      "name": "Ensure each document has a single root element",
+      "priority": 4
+    },
+    {
+      "name": "Maintain overall input size within limits",
+      "priority": 3
+    }
+  ],
+  "constraints": [
+    {
+      "type": "max_depth",
+      "value": 5
+    },
+    {
+      "type": "max_size",
+      "value": 500
+    },
+    {
+      "type": "entity_whitelist",
+      "value": [
+        "amp",
+        "lt",
+        "gt",
+        "quot",
+        "apos"
+      ]
+    },
+    {
+      "type": "forbid_control_chars",
+      "value": true
+    },
+    {
+      "type": "valid_utf8",
+      "value": true
+    }
+  ],
+  "mutations": [
+    {
+      "name": "increase_nesting",
+      "probability": 0.2
+    },
+    {
+      "name": "inject_entities",
+      "probability": 0.1
+    },
+    {
+      "name": "duplicate_attributes",
+      "probability": 0.15
+    },
+    {
+      "name": "mismatched_tags",
+      "probability": 0.2
+    },
+    {
+      "name": "second_root",
+      "probability": 0.15
+    },
+    {
+      "name": "bad_entity",
+      "probability": 0.05
+    },
+    {
+      "name": "unterminated_comment",
+      "probability": 0.05
+    },
+    {
+      "name": "unterminated_cdata",
+      "probability": 0.05
+    }
+  ],
+  "metadata": {}
+}

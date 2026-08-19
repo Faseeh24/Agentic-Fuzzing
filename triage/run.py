@@ -78,7 +78,7 @@ def collect_crashes_from_logs(logs_dir: Path) -> list[dict[str, Any]]:
             if not line.strip():
                 continue
             record = json.loads(line)
-            examples = record.get("examples", [])
+            examples = record.get("results", {}).get("examples", [])
             for ex in examples:
                 if isinstance(ex, dict):
                     input_text = ex.get("input", "")

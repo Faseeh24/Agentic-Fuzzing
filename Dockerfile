@@ -11,25 +11,31 @@
 # Run sample tests:
 #   docker run --rm -v "$(pwd)":/src mxml-harness make -C /src/harness test
 #
+# Run the full agentic fuzzing pipeline:
+#   docker compose up
+#
 
 FROM debian:trixie-slim
 
-# Install gcc, make, and the sanitizer runtime packages
+# Install gcc, make, python3, and sanitizer runtime
 RUN apt-get update && apt-get install -y \
         gcc \
         make \
         python3 \
         python3-pip \
+        python3-venv \
         libasan8 \
         libubsan1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python fuzzing / LLM dependencies from requirements.txt
+# Install Python fuzzing / LLM / grammar dependencies
 COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --break-system-packages -r /tmp/requirements.txt
+RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install -r /tmp/requirements.txt
 
-# Copy the project source into the image
+# Copy project source
 WORKDIR /src
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONPATH=/src
 
-# Default command: build and run sample tests
+# Default: build harness and run sample tests
 CMD ["make", "-C", "/src/harness", "all", "test"]
