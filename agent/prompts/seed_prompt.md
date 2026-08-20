@@ -222,6 +222,26 @@ xml_strategy = st.recursive(
 )
 ```
 
+## CRITICAL: Do not pass strategy objects as string arguments
+
+Many parameters to Hypothesis constructors expect **plain Python values**, not strategy objects.
+Never pass a `st.text(...)`, `st.builds(...)`, or any other strategy object where a string/int/list
+is expected:
+
+**Wrong (will crash with TypeError):**
+```python
+st.text(alphabet=string.ascii_letters + st.text(min_size=1), ...)  # Cannot add str + LazyStrategy
+```
+
+**Correct:**
+```python
+ALPHABET = string.ascii_letters + string.digits + "_-:"
+st.text(alphabet=ALPHABET, min_size=1, max_size=10)
+```
+
+Always compute string values (like alphabets) using plain Python `+` concatenation of strings
+before passing them to strategy constructors.
+
 ## Constraints
 
 - Maximum nesting depth: 30 (go deep to test stack handling)

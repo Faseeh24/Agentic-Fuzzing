@@ -389,6 +389,12 @@ def run_orchestrator(
             elif "NameError" in str(violations) or "not defined" in str(violations):
                 error_hint = ("You used a name (e.g. a function or variable) that was not defined. "
                               "Make sure all helper functions are defined before they are used.\n")
+            elif "TypeError" in str(violations) or "LazyStrategy" in str(violations):
+                error_hint = ("TypeError: you passed a Hypothesis strategy object (LazyStrategy) "
+                              "where a plain Python value is required. For example, `alphabet=` must be "
+                              "a string like `string.ascii_letters + string.digits`, NOT a strategy like "
+                              "`st.text(...)`. Always compute string values before passing them as "
+                              "parameters to strategy constructors.\n")
             seed_prompt = (
                 seed_prompt
                 + "\n\nYour previous response was REJECTED with these errors:\n"
