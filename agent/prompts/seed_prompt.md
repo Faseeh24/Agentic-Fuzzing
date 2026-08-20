@@ -9,7 +9,7 @@ Output ONLY raw Python source code. NOT a single extra word.
 - NO explanations
 - NO commentary
 - NO "Here is the code" or similar phrases
-- The very first character of your response MUST be `i`, `d`, `f`, `x`, `#`, or a whitespace-indented continuation of code
+- The very first character of your response MUST be a valid Python character
 
 If you output anything that is not valid Python source, the pipeline will fail.
 
@@ -38,45 +38,119 @@ Valid XML is secondary. Malformed and edge-case inputs should be the majority (7
 - Every function and variable you reference MUST be defined
 - No placeholders, no `...`, no `_NAME` unbound variables
 
-## CRITICAL Hypothesis API rules (Kaggle-compatible, works in hypothesis >=6.0)
+## Hypothesis API Reference (Kaggle-compatible, hypothesis >=6.0)
 
-1. **`st.recursive` extend must be a callable lambda:**
-   ```
-   st.recursive(base=..., extend=lambda children: st.one_of(children, ...), max_leaves=20)
-   ```
-   NEVER pass a strategy object directly as `extend`.
+### `st.builds(callable, *strategies, **kw_strategies)`
+The FIRST argument MUST be a callable (function or lambda). All subsequent arguments are strategies that generate values passed to the callable.
 
-2. **`st.dictionaries` uses `keys=` and `values=`, NOT `key_type=` / `value_type=`:**
-   ```
-   st.dictionaries(keys=st.text(min_size=1), values=st.integers())
-   ```
+```python
+# CORRECT — first arg is a lambda (callable):
+st.builds(lambda n: "<" + n + "/>", _NAME)
+st.builds(lambda n, v: f'{n}="{v}"', _ATTR_NAME, _ATTR_VALUE)
+st.builds(lambda n, a, v: f"<{n} {a}=\"{v}\">", _NAME, _ATTR_NAME, _ATTR_VALUE)
 
-3. **Never pass a strategy object where a plain Python value is expected:**
-   - `alphabet=` must be a string, not a strategy
-   - `min_size=` / `max_size=` must be ints, not strategies
-   ```
-   # WRONG: st.text(alphabet=string.ascii_letters + st.text(min_size=1))
-   # CORRECT: ALPHABET = string.ascii_letters + string.digits + "_-:"
-   ```
+# WRONG — first arg is a strategy object, NOT a callable:
+st.builds(st.sampled_from(["a", "b"]))  # WRONG — will crash with TypeError
+```
 
-4. **F-strings: double literal braces:**
-   ```
-   f"<{n}/>"           # {n} is fine; {n} gets replaced by the value of n
-   f"{{literal}}"      # {{ and }} produce literal { and }
-   ```
-   Prefer string concatenation (`+`) for building XML tags — it is safer.
+### `st.sampled_from(items)`
+Takes a plain Python list of values (NOT strategies). Returns one item from the list.
 
-5. **Only use these Hypothesis APIs (all available since hypothesis 6.0):**
-   `st.text`, `st.integers`, `st.sampled_from`, `st.just`, `st.one_of`,
-   `st.builds`, `st.lists`, `st.recursive`, `st.dictionaries`,
-   `st.fixed_dictionaries`, `st.binary`, `st.booleans`, `st.none`,
-   `string` module, `random` module.
+```python
+st.sampled_from(["amp", "lt", "gt"])  # CORRECT
+```
+
+### `st.just(value)`
+Returns a fixed value every time. Takes a plain Python value (NOT a strategy).
+
+```python
+st.just("<!-- comment -->")  # CORRECT
+```
+
+### `st.one_of(*strategies)`
+Takes zero or more strategies (NOT plain values). Picks one at random.
+
+```python
+st.one_of(_A, _B, _C)  # CORRECT — all args are strategies
+```
+
+### `st.text(alphabet=string, min_size=int, max_size=int)`
+`alphabet` must be a STRING (not a strategy). `min_size` and `max_size` must be ints.
+
+```python
+st.text(alphabet=string.ascii_letters, min_size=1, max_size=20)  # CORRECT
+```
+
+### `st.lists(strategy, min_size=int, max_size=int)`
+First arg is a strategy (generates list elements).
+
+```python
+st.lists(_ATTR, min_size=0, max_size=5)  # CORRECT
+```
+
+### `st.recursive(base, extend, max_leaves=int)`
+`base` is a strategy. `extend` MUST be a callable (lambda) that takes a strategy and returns a strategy.
+
+```python
+st.recursive(
+    base=st.just("leaf"),
+    extend=lambda children: st.builds(lambda c: "(" + c + ")", children),
+    max_leaves=5,
+)  # CORRECT
+
+st.recursive(
+    base=st.just("leaf"),
+    extend=st.one_of(...),  # WRONG — extend must be callable, not a strategy
+)  # WRONG
+```
+
+### `st.integers(min_value=int, max_value=int)`
+```python
+st.integers(min_value=0, max_value=100)  # CORRECT
+```
+
+## PREFERRED: Use @st.composite for XML construction
+
+Using `@st.composite` is STRONGLY RECOMMENDED for building XML tag strategies. It is easier to understand and less error-prone than complex `st.builds()` chains.
+
+**Correct @composite pattern for XML tags:**
+
+```python
+@st.composite
+def _open_tag(draw):
+    name = draw(_name_strategy())
+    attrs = draw(_attr_strategy())
+    if attrs:
+        return "<" + name + " " + " ".join(attrs) + ">"
+    return "<" + name + ">"
+
+@st.composite
+def _self_closing_tag(draw):
+    name = draw(_name_strategy())
+    attrs = draw(_attr_strategy())
+    if attrs:
+        return "<" + name + " " + " ".join(attrs) + "/>"
+    return "<" + name + "/>"
+```
+
+**Key benefits:**
+- Use `draw()` to sample from sub-strategies
+- Build complex strings with normal Python string operations
+- Less likely to have `st.builds()` first-arg mistakes
+- Easier for small models to follow
+
+## Rules for composing strategies
+
+1. Use `st.one_of()` to combine sub-strategies with appropriate weights
+2. Use `@st.composite` + `draw()` for complex XML construction
+3. Use `st.sampled_from([...])` to pick from a fixed list of strings
+4. Use `st.recursive()` for nested/recursive XML structures
+5. Define ALL helper strategies as module-level variables or functions BEFORE `xml_strategy`
 
 ## Strategy composition
 
-Use `st.one_of()` to combine sub-strategies. Majority should be malformed:
-
-```
+Majority should be malformed (70%+). Use `st.one_of()` to combine:
+```python
 xml_strategy = st.one_of(
     _element_strategy(),
     _attribute_edge_cases(),
@@ -101,8 +175,6 @@ xml_strategy = st.one_of(
 
 **Attribute edge cases:**
 - Duplicate: `<a x="1" x="2"/>`
-- Empty name: `""` as attr
-- Missing name: `= "val"`
 - Unterminated value: `attr="unclosed`
 - Empty value: `attr=`
 - Null bytes: `\x00` in values
@@ -117,7 +189,6 @@ xml_strategy = st.one_of(
 **Comment/CDATA/PI edge cases:**
 - Unterminated: `<!-- unclosed`, `<![CDATA[unclosed`
 - Nested: `<!-- <!-- -->`
-- Extra content after: `<!-- x -->extra`, `<![CDATA[x]]]>extra`
 - Bare markers: `]]>`, `<?`
 - Invalid decl: `<?xml`, `<?xml version=`
 
@@ -137,10 +208,12 @@ xml_strategy = st.one_of(
 ## Rules
 
 1. Output ONLY valid Python source. No prose, no fences.
-2. Import only `hypothesis.strategies as st`, `string`, `random`.
+2. Import only `hypothesis.strategies`, `string`, `random`.
 3. Define `xml_strategy` as a module-level assignment.
 4. 70%+ of generated inputs must be malformed or edge-case.
 5. No external libraries, no I/O operations.
 6. Use `random.choice()` and `random.randint()` inside helper functions if needed.
 7. Every helper must be complete and self-contained.
 8. All helpers must be defined before `xml_strategy` references them.
+9. NEVER pass a strategy object as the first argument to `st.builds()` — the first argument must always be a callable.
+10. USE `@st.composite` + `draw()` for building XML tags; it is simpler and more reliable than complex `st.builds()` chains.
