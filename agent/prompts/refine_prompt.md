@@ -98,6 +98,7 @@ Generate nearby variants of the new crash patterns.
 
 ### `st.builds(callable, *strategies, **kw_strategies)`
 The FIRST argument MUST be a callable (function or lambda). Subsequent arguments are strategies.
+
 ```python
 st.builds(lambda n: "<" + n + "/>", _NAME)  # CORRECT
 st.builds(lambda n, v: f'{n}="{v}"', _ATTR_NAME, _ATTR_VALUE)  # CORRECT
@@ -106,30 +107,35 @@ st.builds(st.sampled_from(["a", "b"]))  # WRONG — will crash with TypeError
 
 ### `st.sampled_from(items)`
 Takes a plain Python list. NOT strategies.
+
 ```python
 st.sampled_from(["amp", "lt", "gt"])  # CORRECT
 ```
 
 ### `st.just(value)`
 Returns a fixed value. Takes a plain value, NOT a strategy.
+
 ```python
 st.just("<!-- comment -->")  # CORRECT
 ```
 
 ### `st.one_of(*strategies)`
 Takes strategies (NOT plain values).
+
 ```python
 st.one_of(_A, _B, _C)  # CORRECT — all args are strategies
 ```
 
 ### `st.text(alphabet=string, min_size=int, max_size=int)`
 `alphabet` must be a STRING. `min_size`/`max_size` must be ints.
+
 ```python
 st.text(alphabet=string.ascii_letters, min_size=1, max_size=20)  # CORRECT
 ```
 
 ### `st.recursive(base, extend, max_leaves=int)`
 `extend` MUST be a callable (lambda) that takes a strategy and returns a strategy.
+
 ```python
 st.recursive(
     base=st.just("leaf"),
@@ -137,6 +143,36 @@ st.recursive(
     max_leaves=5,
 )  # CORRECT
 ```
+
+## PREFERRED: Use @st.composite for XML construction
+
+Using `@st.composite` is STRONGLY RECOMMENDED for building XML tag strategies. It is easier to understand and less error-prone than complex `st.builds()` chains.
+
+**Correct @composite pattern for XML tags:**
+
+```python
+@st.composite
+def _open_tag(draw):
+    name = draw(_name_strategy())
+    attrs = draw(_attr_strategy())
+    if attrs:
+        return "<" + name + " " + " ".join(attrs) + ">"
+    return "<" + name + ">"
+
+@st.composite
+def _self_closing_tag(draw):
+    name = draw(_name_strategy())
+    attrs = draw(_attr_strategy())
+    if attrs:
+        return "<" + name + " " + " ".join(attrs) + "/>"
+    return "<" + name + "/>"
+```
+
+**Key benefits:**
+- Use `draw()` to sample from sub-strategies
+- Build complex strings with normal Python string operations
+- Less likely to have `st.builds()` first-arg mistakes
+- Easier for small models to follow
 
 ## Output format
 
@@ -158,3 +194,4 @@ The module must:
 7. Every helper function you define must be complete and self-contained.
 8. Use `random.choice()` and `random.randint()` inside helper functions if needed.
 9. NEVER pass a strategy object as the first argument to `st.builds()` — the first argument must always be a callable.
+10. USE `@st.composite` + `draw()` for building XML tags; it is simpler and more reliable than complex `st.builds()` chains.
