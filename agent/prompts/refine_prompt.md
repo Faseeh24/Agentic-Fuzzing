@@ -1,4 +1,17 @@
-# Strategy Refinement Prompt — Crash-Focused
+# Strategy Refinement Prompt
+
+You are an expert Python fuzzing strategist. Your ONLY job is to write a Hypothesis strategy module.
+
+## OUTPUT FORMAT — ABSOLUTE RULE
+
+Output ONLY raw Python source code. NOT a single extra word.
+- NO markdown fences (no backticks)
+- NO explanations
+- NO commentary
+- NO "Here is the code" or similar phrases
+- The very first character of your response MUST be `i`, `d`, `f`, `x`, `#`, or whitespace
+
+If you output anything that is not valid Python source, the pipeline will fail.
 
 ## Previous strategy code
 
@@ -14,171 +27,114 @@
 
 ## Your task
 
-Based on the information above, **rewrite the complete Python strategy module**
-and improve the `xml_strategy` definition. Your **primary goal is to find crashes**, not to generate valid XML.
+Rewrite the complete Python strategy module and improve `xml_strategy`.
+Your PRIMARY goal is to find crashes, not generate valid XML.
 
 ## Analysis guidelines
 
-1. **If crashes were found:** Generate **variants** of the crashing patterns. Modify element names, attribute values, nesting depths, and content to explore nearby input space. Try to find **different crash signatures** (different crash types).
+1. **If crashes were found:** Generate variants of the crashing patterns. Vary element names, attribute values, nesting depths, and content to explore nearby input space. Try to find different crash signatures.
 
-2. **If acceptance rate is low:** This is GOOD — it means your malformed inputs are working. Do NOT reduce malformed input proportion. Instead, diversify the types of malformed inputs.
+2. **If acceptance rate is low:** This is GOOD — your malformed inputs are working. Do NOT reduce the malformed proportion. Instead diversify the types of malformed inputs.
 
-3. **If acceptance rate is high and no crashes:** This means your strategy is too safe. Aggressively increase malformed input proportion to 80%+.
+3. **If acceptance rate is high and no crashes:** Your strategy is too safe. Aggressively increase malformed input proportion to 80%+.
 
-4. **If refinement error occurred:** Fix the specific error reported and continue crash-finding focus.
+4. **If refinement error occurred:** Fix the specific error reported and continue.
 
 ## Aggressive crash-targeting tactics
 
-### Always include these crash vectors:
-
-**Tag mismatch crashes:**
+### Tag mismatch crashes
 - `<a><b></a></b>` with varying depths
 - `<a><b><c></a></b></c>` wrong close order
 - `<a><b></a><c></c></b>` interleaved unclosed
 - `<a><b/></a></a>` double close after self-close
-- Nested mismatch: `<outer><inner></outer></inner>`
+- `<outer><inner></outer></inner>` nested mismatch
 
-**Attribute parsing crashes:**
+### Attribute parsing crashes
 - Duplicate attributes: `<a x="1" x="2" x="3"/>`
-- Unterminated attribute values: `<a attr="unclosed`
-- Empty attribute syntax: `<a = "val"/>`, `<a attr=/>`
-- Attribute values with embedded quotes: `<a attr="a\"b"/>`
-- Very long attribute values: 1000+ chars
-- Null bytes in attributes: `<a attr="\x00"/>`
+- Unterminated values: `<a attr="unclosed`
+- Empty syntax: `<a = "val"/>`, `<a attr=/>`
+- Embedded quotes in values
+- Very long: 1000+ chars
+- Null bytes: `<a attr="\x00"/>`
 
-**Entity reference crashes:**
-- Invalid entities: `&foo;`, `&bar;`, `&unknown;`
-- Incomplete entities: `&amp`, `&`, `&;`
-- Deeply nested entities: `&amp;amp;amp;amp;`
-- Entities in attribute values: `<a attr="&foo;"/>`
+### Entity reference crashes
+- Invalid: `&foo;`, `&bar;`
+- Incomplete: `&amp`, `&`, `&;`
+- Deep nesting: `&amp;amp;amp;amp;`
+- In attributes: `<a attr="&foo;"/>`
 - Many invalid entities in one input
 
-**Comment/CDATA/PI crashes:**
-- Unterminated comments: `<!-- unclosed`
-- Nested comments: `<!-- <!-- -->`
+### Comment/CDATA/PI crashes
+- Unterminated: `<!-- unclosed`, `<![CDATA[unclosed`
+- Nested: `<!-- <!-- -->`
 - CDATA with embedded `]]>`: `<![CDATA[a]]>b]]>`
 - Bare `]]>` without CDATA start
 - Malformed PIs: `<?`, `<?xml`, `<? `
 
-**Control character crashes:**
-- Null bytes: `\x00` in element names, attributes, content
-- Form feed: `\x0C` (this is the one that triggered the known crash)
+### Control character crashes
+- Null bytes `\x00` in names, attributes, content
+- Form feed `\x0C` (known crash trigger)
 - All controls 0x00-0x1F except `\t`, `\n`, `\r`
-- Control characters in attribute values
-- Control characters in element names
-- Control characters in entity names
+- Controls in attribute values, element names, entity names
 
-**Nesting/depth crashes:**
-- Deep nesting: 50+ levels
-- Wide trees: 100+ siblings
-- Deep + wide combined
-- Unbalanced nesting: more opens than closes
+### Nesting/depth crashes
+- Deep: 50+ levels
+- Wide: 100+ siblings
+- Unbalanced: more opens than closes
 
-**Encoding crashes:**
-- Invalid UTF-8 byte sequences
-- BOM in unexpected places
-- Lone surrogates
-
-**Size stress:**
-- Very large single inputs (2000+ bytes)
+### Size stress
+- Very large single inputs: 2000+ bytes
 - Many small inputs with edge cases
-- inputs with many special characters
 
-## Tactic Switch (CRITICAL — READ CAREFULLY)
+## Tactic Switch (CRITICAL)
 
 ### If previous iteration found ZERO crashes:
-
-You MUST shift to an **extremely aggressive** crash-finding posture:
-- Set malformed input proportion to **80-90%**
-- Focus on inputs that combine MULTIPLE edge cases at once (e.g., null bytes inside unterminated attribute values inside mismatched tags)
-- Generate inputs that test parser recovery paths
-- Try inputs that might cause infinite loops or stack overflows
+Set malformed proportion to 80-90%. Focus on inputs that combine MULTIPLE edge cases at once (e.g., null bytes inside unterminated attribute values inside mismatched tags). Try inputs that might cause infinite loops or stack overflows.
 
 ### If previous iteration found crashes but no NEW signatures:
-
-Focus on **diversifying** — try completely different crash patterns:
-- If you found memory leaks, try buffer overflows
-- If you found parse errors, try encoding issues
-- If you found tag mismatches, try attribute edge cases
-- Combine multiple edge cases in single inputs
+Diversify — try completely different crash patterns. If you found memory leaks, try buffer overflows. If you found parse errors, try encoding issues.
 
 ### If previous iteration found new crashes:
+Generate nearby variants of the new crash patterns to find similar bugs.
 
-Generate **nearby variants** of the new crash patterns to see if similar bugs exist.
+## CRITICAL Hypothesis API rules (Kaggle-compatible, works in hypothesis >=6.0)
 
-## Output format — IMPORTANT
+1. **`st.recursive` extend must be a callable lambda:**
+   `st.recursive(base=..., extend=lambda children: st.one_of(children, ...), max_leaves=20)`
+   NEVER pass a strategy object directly as `extend`.
 
-Output **ONLY** the complete Python source file. Do **NOT** wrap the code in
-markdown fences (no triple backticks) and do not include any prose. The module
-must:
+2. **`st.dictionaries` uses `keys=` and `values=`, NOT `key_type=` / `value_type=`:**
+   `st.dictionaries(keys=st.text(min_size=1), values=st.integers())`
 
+3. **Never pass a strategy object where a plain Python value is expected:**
+   `alphabet=` must be a string. `min_size=` / `max_size=` must be ints.
+
+4. **F-strings: double literal braces:**
+   Prefer string concatenation (`+`) over f-strings for building XML.
+   If using f-strings, `{{` and `}}` produce literal `{` and `}`.
+
+5. **Only use these Hypothesis APIs (all available since hypothesis 6.0):**
+   `st.text`, `st.integers`, `st.sampled_from`, `st.just`, `st.one_of`,
+   `st.builds`, `st.lists`, `st.recursive`, `st.dictionaries`,
+   `st.fixed_dictionaries`, `st.binary`, `st.booleans`, `st.none`,
+   `string` module, `random` module.
+
+## Output format
+
+The module must:
 1. Contain all required `import` statements
 2. Define all sub-strategy helper functions (private, names starting with `_`)
-3. Define a plain **module-level assignment** `xml_strategy = <SearchStrategy>`
+3. Define a plain module-level assignment: `xml_strategy = <SearchStrategy>`
 
-`xml_strategy` MUST be a module-level assignment. Do not define it as a
-function, do not nest it inside a function, and do not return it.
+`xml_strategy` MUST be a module-level assignment. Do not define it as a function, nest it inside a function, or return it.
 
 ## Rules
 
-1. Only valid Python code — no markdown code fences, no prose.
+1. Only valid Python code — no markdown fences, no prose.
 2. Import only `hypothesis.strategies`, `string`, `random`.
-3. Ensure `xml_strategy` is a module-level variable, initialized with a plain
-   assignment — never defined inside a function and returned.
+3. `xml_strategy` must be a module-level variable initialized with a plain assignment.
 4. No I/O, file operations, or system calls.
 5. The strategy must produce `str` XML text.
-6. **Malformed inputs must be the majority (70%+).**
-
-## CRITICAL: f-strings — escape literal braces
-
-When using f-strings to build XML, **literal `{` and `}` characters must be doubled**
-(`{{` and `}}`). Python does NOT auto-escape them.
-
-**Wrong (SyntaxError — `}` was never closed):**
-```python
-st.builds(lambda n: f"<{n}/>", _NAME)  # May break if {} appears unescaped
-```
-
-**Correct — prefer concatenation for XML:**
-```python
-st.builds(lambda n, a, v: "<" + n + " " + a + "=\"" + v + "\"/>", _NAME, _ATTR_NAME, _ATTR_VALUE_SAFE)
-```
-
-When in doubt, use `+` concatenation or `"".join(...)` instead of f-strings for XML.
-
-## CRITICAL: Hypothesis API — use `keys=` not `key_type=`
-
-`st.dictionaries()` uses `keys=` and `values=`:
-
-**Wrong:** `st.dictionaries(key_type=..., value_type=...)`
-**Correct:** `st.dictionaries(keys=st.text(min_size=1), values=st.integers())`
-
-## CRITICAL: No Placeholders
-
-- You MUST define every function and variable you use.
-- Do NOT use placeholders like `_NAME`, `SOME_VAR`, or `...`.
-- If you define a helper function, you MUST define it **before** `xml_strategy` uses it.
-
-## Recursion rule (critical)
-
-For `st.recursive(base=..., extend=..., ...)`, the `extend` argument must be a
-**callable** `lambda children: <strategy>`. It receives a strategy object for
-recursive/nested children and must return a strategy. Never pass a strategy
-object directly as `extend`, and never call a strategy object as a function —
-Hypothesis raises `TypeError: 'LazyStrategy' object is not callable`.
-
-**Correct:**
-```python
-xml_strategy = st.recursive(
-    base=...,
-    extend=lambda children: st.one_of(children, ...),
-)
-```
-
-**Incorrect (will fail):**
-```python
-xml_strategy = st.recursive(
-    base=...,
-    extend=st.one_of(children, ...),  # WRONG
-)
-```
+6. Malformed inputs must be the majority (70%+).
+7. Every helper function you define must be complete and self-contained.
+8. Use `random.choice()` and `random.randint()` inside helper functions if needed.
