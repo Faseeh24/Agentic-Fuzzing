@@ -242,6 +242,46 @@ st.text(alphabet=ALPHABET, min_size=1, max_size=10)
 Always compute string values (like alphabets) using plain Python `+` concatenation of strings
 before passing them to strategy constructors.
 
+## CRITICAL: f-strings — escape literal braces
+
+When using f-strings to build XML, **literal `{` and `}` characters inside the string MUST be
+doubled** (`{{` and `}}`). Python does NOT automatically escape them.
+
+**Wrong (SyntaxError — `}` was never closed):**
+```python
+# This crashes because the inner {} is interpreted as a format expression
+st.builds(lambda n: f"<{n}/>", _NAME)  # BROKEN: outer {n} ok, but {} is unescaped
+```
+
+**Correct:**
+```python
+# Double all literal braces
+st.builds(lambda n: f"<{n}{{attr}}=\"val\"/>", _NAME)  # Produces <name{attr}="val"/>
+```
+
+If you don't need an f-string, use plain concatenation instead — it is safer:
+```python
+st.builds(lambda n, a, v: "<" + n + " " + a + "=\"" + v + "\"/>", _NAME, _ATTR_NAME, _ATTR_VALUE_SAFE)
+```
+
+When in doubt, prefer string concatenation (`+`) or `"".join(...)` over f-strings for
+building XML. F-strings are error-prone for XML because `<`, `>`, `{`, and `}` are all
+structural characters.
+
+## CRITICAL: Hypothesis API — use `keys=` not `key_type=`
+
+`st.dictionaries()` uses `keys=` and `values=`, NOT `key_type=` and `value_type=`:
+
+**Wrong (TypeError — unexpected keyword argument):**
+```python
+st.dictionaries(key_type=st.text(min_size=1), value_type=st.integers())
+```
+
+**Correct:**
+```python
+st.dictionaries(keys=st.text(min_size=1), values=st.integers())
+```
+
 ## Constraints
 
 - Maximum nesting depth: 30 (go deep to test stack handling)

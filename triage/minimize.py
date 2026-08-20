@@ -126,7 +126,7 @@ def _parse_elements(text: str) -> list[dict[str, Any]]:
         if inner.rstrip().endswith("/>"):
             elements.append({
                 "tag": tag,
-                "attrs": attrs,
+                "attrs": [a[0] for a in attrs],
                 "children": 0,
                 "depth": depth,
                 "slice": (start, j + 1),

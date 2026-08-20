@@ -395,6 +395,13 @@ def run_orchestrator(
                               "a string like `string.ascii_letters + string.digits`, NOT a strategy like "
                               "`st.text(...)`. Always compute string values before passing them as "
                               "parameters to strategy constructors.\n")
+            elif "dictionaries" in str(violations) or "key_type" in str(violations):
+                error_hint = ("You used the wrong Hypothesis API: `st.dictionaries()` takes "
+                              "`keys=` and `values=` parameters, NOT `key_type=` and `value_type=`.\n")
+            elif "f-string" in str(violations) or "fstring" in str(violations).lower() or "never closed" in str(violations).lower():
+                error_hint = ("Your f-string has unmatched `{` or `}` braces. In f-strings, literal "
+                              "curly braces must be doubled: `{{` and `}}`. When building XML, prefer "
+                              "string concatenation (`+`) over f-strings to avoid this issue entirely.\n")
             seed_prompt = (
                 seed_prompt
                 + "\n\nYour previous response was REJECTED with these errors:\n"
@@ -602,11 +609,24 @@ def run_orchestrator(
                 time.sleep(2)
                 error_hint = ""
                 if "SyntaxError" in str(violations):
-                    error_hint = ("Your code has a syntax error. Ensure every opening bracket "
-                                  "has a matching closing bracket and there are no typos.\n")
+                    error_hint = ("Your code has a syntax error (e.g. unclosed parenthesis or bracket). "
+                                  "Ensure every opening bracket has a matching closing bracket.\n")
                 elif "NameError" in str(violations) or "not defined" in str(violations):
-                    error_hint = ("You referenced a name that was not defined. "
-                                  "Define all helper functions before using them.\n")
+                    error_hint = ("You used a name (e.g. a function or variable) that was not defined. "
+                                  "Make sure all helper functions are defined before they are used.\n")
+                elif "TypeError" in str(violations) or "LazyStrategy" in str(violations):
+                    error_hint = ("TypeError: you passed a Hypothesis strategy object (LazyStrategy) "
+                                  "where a plain Python value is required. For example, `alphabet=` must be "
+                                  "a string like `string.ascii_letters + string.digits`, NOT a strategy like "
+                                  "`st.text(...)`. Always compute string values before passing them as "
+                                  "parameters to strategy constructors.\n")
+                elif "dictionaries" in str(violations) or "key_type" in str(violations):
+                    error_hint = ("You used the wrong Hypothesis API: `st.dictionaries()` takes "
+                                  "`keys=` and `values=` parameters, NOT `key_type=` and `value_type=`.\n")
+                elif "f-string" in str(violations) or "fstring" in str(violations).lower() or "never closed" in str(violations).lower():
+                    error_hint = ("Your f-string has unmatched `{` or `}` braces. In f-strings, literal "
+                                  "curly braces must be doubled: `{{` and `}}`. When building XML, prefer "
+                                  "string concatenation (`+`) over f-strings to avoid this issue entirely.\n")
                 refine_prompt = (
                     refine_prompt
                     + "\n\nYour previous response was REJECTED with these errors:\n"

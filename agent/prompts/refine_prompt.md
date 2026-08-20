@@ -129,6 +129,30 @@ function, do not nest it inside a function, and do not return it.
 5. The strategy must produce `str` XML text.
 6. **Malformed inputs must be the majority (70%+).**
 
+## CRITICAL: f-strings — escape literal braces
+
+When using f-strings to build XML, **literal `{` and `}` characters must be doubled**
+(`{{` and `}}`). Python does NOT auto-escape them.
+
+**Wrong (SyntaxError — `}` was never closed):**
+```python
+st.builds(lambda n: f"<{n}/>", _NAME)  # May break if {} appears unescaped
+```
+
+**Correct — prefer concatenation for XML:**
+```python
+st.builds(lambda n, a, v: "<" + n + " " + a + "=\"" + v + "\"/>", _NAME, _ATTR_NAME, _ATTR_VALUE_SAFE)
+```
+
+When in doubt, use `+` concatenation or `"".join(...)` instead of f-strings for XML.
+
+## CRITICAL: Hypothesis API — use `keys=` not `key_type=`
+
+`st.dictionaries()` uses `keys=` and `values=`:
+
+**Wrong:** `st.dictionaries(key_type=..., value_type=...)`
+**Correct:** `st.dictionaries(keys=st.text(min_size=1), values=st.integers())`
+
 ## CRITICAL: No Placeholders
 
 - You MUST define every function and variable you use.
