@@ -12,7 +12,8 @@ a Kaggle Model) instead of the Groq API.
 | `llm_client_hf.py` | Open-source `LLMClient` (HF Transformers); the notebook writes it over `agent/llm_client.py` via a `%%writefile` cell. |
 | `build_notebook.py` | Generator that rebuilds the notebook from the cells + `llm_client_hf.py`. Re-run after editing either. |
 
-## How the LLM swap works
+## MXML dependency
+The notebook includes a cell that clones the `mxml` library and checks out a specific commit (`e6824d899d949387fb0156af6f4101373b9be519`) to ensure consistent fuzzing behavior.
 
 `agent/orchestrator.py` only talks to the LLM through this interface:
 

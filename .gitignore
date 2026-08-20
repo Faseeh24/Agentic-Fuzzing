@@ -217,3 +217,5 @@ harness/*.d
 harness/mxml_harness
 target/mxml/*.o
 target/mxml/*.d
+
+PROJECT_GUIDE.md

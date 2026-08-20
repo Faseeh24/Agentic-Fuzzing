@@ -41,6 +41,7 @@ The system reports one of these states after each run:
 - **Groq API key** — get one at <https://console.groq.com/keys>
 - **C compiler** (gcc/clang) with ASan/UBSan support
 - **Docker** (optional, for sandboxed execution)
+- **Mini-XML (mxml) library** — vendored in `target/mxml/`
 
 ## Installation
 
@@ -51,12 +52,38 @@ git clone <repo-url> && cd Agentic-Fuzzing
 # Install Python dependencies
 pip install -r requirements.txt
 
-# Build the C harness
+# Build the C harness (requires mxml library in target/mxml/)
 make -C harness all
 
 # Run sample tests
 make -C harness test
 ```
+
+### Mini-XML (mxml) Setup
+
+The project ships with the **Mini-XML v4.0** library vendored at `target/mxml/`.
+This is the exact version used throughout fuzzing — no separate download is needed.
+
+**If you need to update or rebuild mxml:**
+
+```bash
+# Clone the mxml repository into target/mxml/ (replaces vendored copy)
+rm -rf target/mxml
+git clone --depth=1 --branch v4.0.5 https://github.com/michaelrsweet/mxml.git target/mxml
+
+# Then rebuild the harness to pick up the new source
+make -C harness clean all
+```
+
+**Target commit** (the version this project was developed against):
+
+- **Commit:** `e6824d8` — _"Use mxml-private.h header in unit test program."_
+- **Date:** 2026-03-21
+- **Version:** Mini-XML 4.0.5-dev (pre-release v4.0.5)
+- **Repository:** <https://github.com/michaelrsweet/mxml>
+
+The vendored copy is compiled with `-fsanitize=address,undefined` to catch memory errors,
+use-after-frees, and undefined behavior in mxml's parser.
 
 ## Configuration
 
@@ -99,6 +126,10 @@ docker compose run --rm harness python3 -m triage.run
 ```
 
 ### Native
+
+> **Note:** The C harness is a Linux ELF binary built with gcc. Native Windows
+> runs require either WSL2 or a cross-compiler. Docker is the recommended
+> environment on Windows.
 
 ```bash
 # Build harness
@@ -195,6 +226,7 @@ This is a **blackbox fuzzer per the assignment's constraints**. Coverage is **ne
 1. **LLM authors Hypothesis code directly; AST validator gates execution** — The LLM produces a full Python strategy file using `st.recursive`/`@composite`. An AST-based static validator (`generator/strategy_validator.py`) rejects unsafe imports, missing `xml_strategy`, or side-effecting calls before the file is loaded in a restricted namespace. This is a deliberate tradeoff: it gives the LLM full expressive power while maintaining a safety boundary that is auditable and reviewable.
 
 2. **Groq-only** — Simplifies configuration, removes fallback complexity.
+   Kaggle notebook supports open-source LLMs (Qwen, etc.) via `kaggle_assets/llm_client_hf.py`.
 
 3. **Explicit pipeline states** — Failures are visible, not hidden.
 

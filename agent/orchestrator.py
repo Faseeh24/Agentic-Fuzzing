@@ -218,8 +218,13 @@ def _has_converged(
         return True
     prev_accept = prev.get("acceptance_rate", 0.0)
     curr_accept = curr.get("acceptance_rate", 0.0)
-    if iteration > 1 and abs(curr_accept - prev_accept) < 0.02:
-        return True
+    # Only converge on acceptance rate if we are NOT finding crashes.
+    # If crashes are being found, keep going to discover more.
+    prev_crashes = prev.get(3, 0) + prev.get(4, 0) + prev.get(5, 0)
+    curr_crashes = curr.get(3, 0) + curr.get(4, 0) + curr.get(5, 0)
+    if iteration > 1 and prev_crashes == 0 and curr_crashes == 0:
+        if abs(curr_accept - prev_accept) < 0.05:
+            return True
     return False
 
 
@@ -348,19 +353,25 @@ def run_orchestrator(
         else:
             violations = quick_validate(python_source)
             if not violations:
-                # Live-load check: make sure the strategy imports AND can
-                # generate an example (catches hallucinated APIs and misused
-                # st.recursive before we commit to it).
+                # Pre-compile check: catch SyntaxError early with line numbers
                 try:
-                    _check = STRATEGIES_DIR / "_seed_check.py"
-                    _check.write_text(python_source, encoding="utf-8")
+                    compile(python_source, '<llm_strategy>', 'exec')
+                except SyntaxError as exc:
+                    violations = [f"SyntaxError at line {exc.lineno}: {exc.msg}"]
+                else:
+                    # Live-load check: make sure the strategy imports AND can
+                    # generate an example (catches hallucinated APIs and misused
+                    # st.recursive before we commit to it).
                     try:
-                        _strat = load_llm_strategy(_check)
-                        _strat.example()
-                    finally:
-                        _check.unlink(missing_ok=True)
-                except Exception as exc:
-                    violations = [f"strategy does not load: {exc}"]
+                        _check = STRATEGIES_DIR / "_seed_check.py"
+                        _check.write_text(python_source, encoding="utf-8")
+                        try:
+                            _strat = load_llm_strategy(_check)
+                            _strat.example()
+                        finally:
+                            _check.unlink(missing_ok=True)
+                    except Exception as exc:
+                        violations = [f"strategy does not load: {exc}"]
 
         if not violations:
             seed_ready = True
@@ -369,13 +380,21 @@ def run_orchestrator(
               f" {'; '.join(violations)[:300]}")
         print(f"[orch]   response preview: {python_source[:200]!r}")
         if attempt < 2:
-            print(f"[orch]   waiting for rate-limit reset before retry ...")
-            time.sleep(15)
+            print(f"[orch]   retrying after validation failure ...")
+            time.sleep(2)
+            error_hint = ""
+            if "SyntaxError" in str(violations):
+                error_hint = ("Your code has a syntax error (e.g. unclosed parenthesis or bracket). "
+                              "Ensure every opening bracket has a matching closing bracket.\n")
+            elif "NameError" in str(violations) or "not defined" in str(violations):
+                error_hint = ("You used a name (e.g. a function or variable) that was not defined. "
+                              "Make sure all helper functions are defined before they are used.\n")
             seed_prompt = (
                 seed_prompt
                 + "\n\nYour previous response was REJECTED with these errors:\n"
                 + "\n".join(f"  - {v}" for v in violations)
-                + "\n\nIMPORTANT: `xml_strategy` must be created with a PLAIN "
+                + "\n\n" + error_hint
+                + "IMPORTANT: `xml_strategy` must be created with a PLAIN "
                   "module-level ASSIGNMENT of the form:\n"
                   "    xml_strategy = <a Hypothesis SearchStrategy>\n"
                   "Do NOT output a function def, a JSON object, a YAML block, a "
@@ -417,8 +436,25 @@ def run_orchestrator(
             tmp_strategy.write_text(current_strategy_source, encoding="utf-8")
             strategy = load_llm_strategy(tmp_strategy)
             print(f"[orch] Strategy loaded successfully")
+        except SyntaxError as exc:
+            print(f"[orch] Strategy loading FAILED (SyntaxError at line {exc.lineno}): {exc.msg}")
+            error_detail = f"SyntaxError at line {exc.lineno}: {exc.msg}"
+        except NameError as exc:
+            print(f"[orch] Strategy loading FAILED (NameError): {exc}")
+            error_detail = f"NameError: {exc}. You must define all functions/variables before using them."
+        except TypeError as exc:
+            print(f"[orch] Strategy loading FAILED (TypeError): {exc}")
+            if "'LazyStrategy' object is not callable" in str(exc):
+                error_detail = ("TypeError: 'LazyStrategy' object is not callable. "
+                                "The 'extend' argument of st.recursive must be a CALLABLE "
+                                "lambda children: <strategy>, not a strategy object directly.")
+            else:
+                error_detail = f"TypeError: {exc}"
         except Exception as exc:
             print(f"[orch] Strategy loading FAILED: {exc}")
+            error_detail = str(exc)
+
+        if 'error_detail' in locals():
             # Try to refine with LLM
             try:
                 refine_prompt_path = AGENT_DIR / "prompts" / "refine_prompt.md"
@@ -426,7 +462,7 @@ def run_orchestrator(
                 refine_prompt = refine_prompt.replace(
                     "{prev_strategy}", current_strategy_source,
                 ).replace(
-                    "{prev_summary}", f"Loading error: {exc}",
+                    "{prev_summary}", f"Loading error: {error_detail}",
                 ).replace(
                     "{crash_sigs}", "",
                 )
@@ -556,13 +592,21 @@ def run_orchestrator(
                   f" {'; '.join(violations)[:300]}")
             print(f"  [orch]   response preview: {python_source[:300]!r}")
             if attempt < 2:
-                print(f"  [orch]   waiting for rate-limit reset before retry ...")
-                time.sleep(15)
+                print(f"  [orch]   retrying after validation failure ...")
+                time.sleep(2)
+                error_hint = ""
+                if "SyntaxError" in str(violations):
+                    error_hint = ("Your code has a syntax error. Ensure every opening bracket "
+                                  "has a matching closing bracket and there are no typos.\n")
+                elif "NameError" in str(violations) or "not defined" in str(violations):
+                    error_hint = ("You referenced a name that was not defined. "
+                                  "Define all helper functions before using them.\n")
                 refine_prompt = (
                     refine_prompt
                     + "\n\nYour previous response was REJECTED with these errors:\n"
                     + "\n".join(f"  - {v}" for v in violations)
-                    + "\n\nIMPORTANT: `xml_strategy` must be created by a PLAIN "
+                    + "\n\n" + error_hint
+                    + "IMPORTANT: `xml_strategy` must be created by a PLAIN "
                       "module-level ASSIGNMENT of the form "
                       "    xml_strategy = <a SearchStrategy>\n"
                       "Do NOT output a JSON, a list, a markdown code fence, or any "

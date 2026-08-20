@@ -205,7 +205,7 @@ Agentic-Fuzzing/
 │   ├── run_harness.py
 │   └── test_wrapper.py
 ├── harness/                       # C harness (bug fixed)
-│   ├── mxml_harness.c
+│   ├── mxml_harness.c       # Driver that reads XML and calls mxmlLoadString
 │   ├── Makefile
 │   └── sample_tests/
 ├── grammar/                       # Grammar reference
@@ -238,12 +238,29 @@ Set `GROQ_API_KEY` in `.env`:
 echo "GROQ_API_KEY=gsk_..." >> .env
 ```
 
-### "C harness not found"
+### "C harness not found" or "not a valid Win32 application"
 
-Build the harness:
+The harness is a Linux ELF binary. On Windows, use Docker or WSL2 to build and run it:
+
+```bash
+docker compose run --rm harness make -C harness all
+```
+
+On Linux/macOS, build directly:
 
 ```bash
 make -C harness all
+```
+
+### "Mini-XML source missing"
+
+The project expects mxml source at `target/mxml/`. If the directory is empty or missing:
+
+```bash
+# Restore the vendored copy from the original commit
+rm -rf target/mxml
+git clone --depth=1 --branch v4.0.5 https://github.com/michaelrsweet/mxml.git target/mxml
+make -C harness clean all
 ```
 
 ### "Strategy validation failed"
@@ -261,6 +278,40 @@ automatic rate-limit detection and will report `LLM_UNAVAILABLE` state.
 Ensure you have `python-dotenv` installed (`pip install python-dotenv`).
 The orchestrator loads `.env` at startup and CLI defaults are drawn from
 those values via `_get_env_int()` / `_get_env_float()` helpers.
+
+## Target Library: Mini-XML (mxml)
+
+This project targets the **Mini-XML** C library, a lightweight XML parsing library.
+
+| Property | Value |
+|----------|-------|
+| **Version** | Mini-XML v4.0 (4.0.5-dev) |
+| **Target commit** | `e6824d8` — _"Use mxml-private.h header in unit test program."_ |
+| **Commit date** | 2026-03-21 |
+| **Repository** | <https://github.com/michaelrsweet/mxml> |
+| **Vendored location** | `target/mxml/` |
+| **License** | Original mxml uses a BSD-style license (see `target/mxml/LICENSE`) |
+
+### Building the Harness
+
+The C harness (`harness/mxml_harness.c`) links against the vendored mxml source and is compiled with ASan + UBSan:
+
+```bash
+make -C harness all
+make -C harness test
+```
+
+The Makefile automatically finds mxml at `../target/mxml/` and compiles all `.c` files with `-fsanitize=address,undefined`.
+
+### Updating the mxml Source
+
+To update the vendored library to a newer version:
+
+```bash
+rm -rf target/mxml
+git clone --depth=1 https://github.com/michaelrsweet/mxml.git target/mxml
+make -C harness clean all
+```
 
 ## License
 
