@@ -206,6 +206,29 @@ This is a **blackbox fuzzer per the assignment's constraints**. Coverage is **ne
 
 7. **Robust LLM strategy production** — The LLM's output is validated with an AST checker **and** actually loaded + sample-generated before it is used. If the model produces an unusable strategy (empty reply, hallucinated API, misused `st.recursive`), the orchestrator falls back to a bundled known-good strategy (`fuzzer/fallback_strategy.py`) so the loop still runs. The LLM client also caps chain-of-thought for reasoning models (`reasoning_effort=low` for GPT-OSS/Qwen) so that a strategy is always emitted instead of an empty `content`.
 
+## Kaggle Notebook (Open-Source LLM Edition) - Notes
+
+A single-file, self-contained Kaggle notebook runs the full pipeline with an
+**open-source HuggingFace model** (no Groq API key required):
+
+- **Notebook:** `kaggle_notebook.ipynb` (repo root) -- upload to Kaggle and run
+  top-to-bottom.
+- **Open-source LLM client:** `kaggle_assets/llm_client_hf.py` -- an
+  interface-compatible `LLMClient` (HF Transformers) that the notebook writes
+  over `agent/llm_client.py` via a `%%writefile` cell. The orchestrator runs
+  unchanged (only the cosmetic `llm_provider` label is patched).
+- **Generator:** `kaggle_assets/build_notebook.py` rebuilds the notebook from
+  the cells + the client source.
+
+Set `MODEL_SOURCE` / `MODEL_NAME` in the notebook's Configuration cell. E.g.
+`MODEL_SOURCE = "hf"` + `MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"` (GPU), or
+`MODEL_SOURCE = "kaggle_input"` + `KAGGLE_MODEL_REF = "/kaggle/input/..."` to use a
+Kaggle Model you attached via the UI. See `kaggle_assets/README.md` for details.
+
+A final "Save artifacts to Output" cell copies strategies, per-iteration logs
+and crash reproducers into `/kaggle/working/output/agentic_fuzzing_run/` so they
+are preserved in the run's Output tab.
+
 ## License
 
 MIT
