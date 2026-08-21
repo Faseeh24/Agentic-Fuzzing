@@ -183,6 +183,12 @@ The module must:
 
 `xml_strategy` MUST be a module-level assignment. Do not define it as a function, nest it inside a function, or return it.
 
+## CRITICAL FUNCTION RULES (PROMPT_CONSTRAINTS)
+
+1. Put ALL logic inside a single @st.composite function named `_xml_generator`.
+2. DO NOT split logic into multiple top-level helper functions (e.g. do not create `_attr_strategy()`, `_name_strategy()`, etc.).
+3. Define `xml_strategy = _xml_generator()` at the very bottom of the file.
+
 ## Rules
 
 1. Only valid Python code — no markdown fences, no prose.

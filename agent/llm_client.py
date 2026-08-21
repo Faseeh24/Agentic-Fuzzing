@@ -75,7 +75,7 @@ class LLMClient:
         payload = {
             "model": self._model,
             "messages": messages,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
         }
         # Reasoning models (gpt-oss, qwen3) spend chain-of-thought tokens by
         # default and can return an EMPTY "content" when reasoning eats the

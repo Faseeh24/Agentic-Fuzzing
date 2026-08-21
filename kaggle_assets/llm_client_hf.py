@@ -184,7 +184,7 @@ class LLMClient:
         with torch.no_grad():
             generated = self._model.generate(
                 input_ids,
-                max_new_tokens=2048,
+                max_new_tokens=4096,
                 temperature=0.2,
                 do_sample=True,
                 top_p=0.95,

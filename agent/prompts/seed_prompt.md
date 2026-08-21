@@ -205,6 +205,12 @@ xml_strategy = st.one_of(
 - Invalid UTF-8 byte sequences
 - BOM-prefixed strings
 
+## CRITICAL FUNCTION RULES (PROMPT_CONSTRAINTS)
+
+1. Put ALL logic inside a single @st.composite function named `_xml_generator`.
+2. DO NOT split logic into multiple top-level helper functions (e.g. do not create `_attr_strategy()`, `_name_strategy()`, etc.).
+3. Define `xml_strategy = _xml_generator()` at the very bottom of the file.
+
 ## Rules
 
 1. Output ONLY valid Python source. No prose, no fences.

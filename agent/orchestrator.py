@@ -382,38 +382,14 @@ def run_orchestrator(
         if attempt < 2:
             print(f"[orch]   retrying after validation failure ...")
             time.sleep(2)
-            error_hint = ""
-            if "SyntaxError" in str(violations):
-                error_hint = ("Your code has a syntax error (e.g. unclosed parenthesis or bracket). "
-                              "Ensure every opening bracket has a matching closing bracket.\n")
-            elif "NameError" in str(violations) or "not defined" in str(violations):
-                error_hint = ("You used a name (e.g. a function or variable) that was not defined. "
-                              "Make sure all helper functions are defined before they are used.\n")
-            elif "TypeError" in str(violations) or "LazyStrategy" in str(violations):
-                error_hint = ("TypeError: you passed a Hypothesis strategy object (LazyStrategy) "
-                              "where a plain Python value is required. For example, `alphabet=` must be "
-                              "a string like `string.ascii_letters + string.digits`, NOT a strategy like "
-                              "`st.text(...)`. Always compute string values before passing them as "
-                              "parameters to strategy constructors.\n")
-            elif "dictionaries" in str(violations) or "key_type" in str(violations):
-                error_hint = ("You used the wrong Hypothesis API: `st.dictionaries()` takes "
-                              "`keys=` and `values=` parameters, NOT `key_type=` and `value_type=`.\n")
-            elif "f-string" in str(violations) or "fstring" in str(violations).lower() or "never closed" in str(violations).lower():
-                error_hint = ("Your f-string has unmatched `{` or `}` braces. In f-strings, literal "
-                              "curly braces must be doubled: `{{` and `}}`. When building XML, prefer "
-                              "string concatenation (`+`) over f-strings to avoid this issue entirely.\n")
-            seed_prompt = (
-                seed_prompt
-                + "\n\nYour previous response was REJECTED with these errors:\n"
-                + "\n".join(f"  - {v}" for v in violations)
-                + "\n\n" + error_hint
-                + "IMPORTANT: `xml_strategy` must be created with a PLAIN "
-                  "module-level ASSIGNMENT of the form:\n"
-                  "    xml_strategy = <a Hypothesis SearchStrategy>\n"
-                  "Do NOT output a function def, a JSON object, a YAML block, a "
-                  "markdown code fence, or any prose. Output ONLY the raw Python "
-                  "module source text.\n"
+            validation_error = "; ".join(violations)
+            retry_prompt = (
+                f"Your previous Python strategy code failed to load with this exact error:\n"
+                f"{validation_error}\n\n"
+                f"Fix the error (e.g., if a variable/function is undefined, define it or inline it) "
+                f"and return ONLY valid executable Python code.\n"
             )
+            seed_prompt = seed_prompt + "\n\n" + retry_prompt
 
     if seed_ready:
         current_strategy_source = python_source
@@ -607,37 +583,14 @@ def run_orchestrator(
             if attempt < 2:
                 print(f"  [orch]   retrying after validation failure ...")
                 time.sleep(2)
-                error_hint = ""
-                if "SyntaxError" in str(violations):
-                    error_hint = ("Your code has a syntax error (e.g. unclosed parenthesis or bracket). "
-                                  "Ensure every opening bracket has a matching closing bracket.\n")
-                elif "NameError" in str(violations) or "not defined" in str(violations):
-                    error_hint = ("You used a name (e.g. a function or variable) that was not defined. "
-                                  "Make sure all helper functions are defined before they are used.\n")
-                elif "TypeError" in str(violations) or "LazyStrategy" in str(violations):
-                    error_hint = ("TypeError: you passed a Hypothesis strategy object (LazyStrategy) "
-                                  "where a plain Python value is required. For example, `alphabet=` must be "
-                                  "a string like `string.ascii_letters + string.digits`, NOT a strategy like "
-                                  "`st.text(...)`. Always compute string values before passing them as "
-                                  "parameters to strategy constructors.\n")
-                elif "dictionaries" in str(violations) or "key_type" in str(violations):
-                    error_hint = ("You used the wrong Hypothesis API: `st.dictionaries()` takes "
-                                  "`keys=` and `values=` parameters, NOT `key_type=` and `value_type=`.\n")
-                elif "f-string" in str(violations) or "fstring" in str(violations).lower() or "never closed" in str(violations).lower():
-                    error_hint = ("Your f-string has unmatched `{` or `}` braces. In f-strings, literal "
-                                  "curly braces must be doubled: `{{` and `}}`. When building XML, prefer "
-                                  "string concatenation (`+`) over f-strings to avoid this issue entirely.\n")
-                refine_prompt = (
-                    refine_prompt
-                    + "\n\nYour previous response was REJECTED with these errors:\n"
-                    + "\n".join(f"  - {v}" for v in violations)
-                    + "\n\n" + error_hint
-                    + "IMPORTANT: `xml_strategy` must be created by a PLAIN "
-                      "module-level ASSIGNMENT of the form "
-                      "    xml_strategy = <a SearchStrategy>\n"
-                      "Do NOT output a JSON, a list, a markdown code fence, or any "
-                      "prose. Output ONLY the raw Python module source text.\n"
+                validation_error = "; ".join(violations)
+                retry_prompt = (
+                    f"Your previous Python strategy code failed to load with this exact error:\n"
+                    f"{validation_error}\n\n"
+                    f"Fix the error (e.g., if a variable/function is undefined, define it or inline it) "
+                    f"and return ONLY valid executable Python code.\n"
                 )
+                refine_prompt = refine_prompt + "\n\n" + retry_prompt
         if not refined_ok:
             break
 
