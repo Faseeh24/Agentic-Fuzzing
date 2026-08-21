@@ -63,7 +63,7 @@ The FIRST argument MUST be a callable (function or lambda). Subsequent arguments
 
 ```python
 st.builds(lambda n: "<" + n + "/>", _NAME)  # CORRECT
-st.builds(lambda n, v: f'{n}="{v}"', _ATTR_NAME, _ATTR_VALUE)  # CORRECT
+st.builds(lambda n, v: '<' + n + ' attr="' + v + '">', _ATTR_NAME, _ATTR_VALUE)  # CORRECT (use concat, not f-string, to avoid quote issues)
 st.builds(st.sampled_from(["a", "b"]))  # WRONG — will crash with TypeError
 ```
 
