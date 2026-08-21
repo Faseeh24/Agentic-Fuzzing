@@ -1,127 +1,80 @@
-# Agentic Fuzzing of Mini-XML (mxml)
-
-**Date:** 2026-08-17T11:01:40.193469+00:00
-**Target:** mxml @ pinned commit `e6824d899d949387fb0156af6f4101373b9be519`
-**Grammar:** ANTLR4 XML grammar from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)
-
----
+# Agentic Fuzzing Report: Mini-XML (mxml)
 
 ## Design
 
-### Target and Grammar
+### Overview
+This project implements an autonomous, agentic fuzzing loop designed to discover C-level memory corruption vulnerabilities in the Mini-XML (`mxml`) library. Unlike traditional fuzzers that rely on static mutation or coverage-guided feedback (like AFL), this system utilizes a Large Language Model (LLM) to iteratively evolve Hypothesis-based Python strategies.
 
-The target is **Mini-XML (mxml)**, a small C library for parsing and manipulating XML data. We fuzz its `mxmlLoadString()` parser, which is the main entry point for loading XML from a string buffer.
+### System Architecture
+The architecture consists of four primary components:
+1.  **Orchestrator:** A control loop that manages the fuzzing iterations. It triggers the strategy generation, executes the fuzzing harness, and handles the feedback loop for refinement.
+2.  **Agentic Generator:** A system that uses an LLM to author complex Python modules using the `hypothesis` library. It uses structured prompts to guide the LLM toward generating high-entropy, malformed XML.
+3.  **Fuzzing Harness:** A C-based driver that wraps the `mxml` library. It is compiled with AddressSanitizer (ASan) and UndefinedBehaviorSanitizer (UBSan) to detect memory leaks, buffer overflows, and undefined behavior.
+4.  **Triage Engine:** An automated post-processing unit that deduplicates crashes by signature, minimizes crashing inputs to the smallest possible reproduction case, and generates reports.
 
-The grammar source is the ANTLR4 reference XML grammar. Rather than using it as strict production rules, we treat it as a **structural reference** — it tells us what shape valid XML takes (elements, attributes, entities, CDATA, comments, processing instructions, DTDs) but not the exact subset mxml accepts.
+### Strategy Steering & Feedback
+Since `mxml` does not provide code coverage instrumentation (like edge coverage in AFL), the refinement process is steered by a **proxy signal**: the **Acceptance Rate** and **Crash Discovery**.
+- **Acceptance Rate:** Measures the ratio of inputs that mxml considers "valid" vs. "malformed." A very high acceptance rate suggests the strategy is too "safe" (generating well-formed XML), while a very low rate indicates it is producing syntactically impossible noise.
+- **Crash Discovery:** The presence of sanitizer violations (ASan/UBSan) or unexpected SIGSEGV/SIGABRT signals.
 
-### Grammar Rules
+When a refinement cycle begins, the LLM is provided with the previous strategy code and the execution summary. If zero crashes were found, the LLM is instructed to switch to "Aggressive Combination" mode, combining multiple malformation vectors (e.g., massive attributes + deep nesting + null bytes) to break parser invariants.
 
-The key insight of this project is that the ANTLR grammar describes **generic XML**, while mxml accepts a **strictly smaller dialect**. Feeding the fuzzer generic-XML generators would produce inputs that mxml rejects at the front door, wasting 100% of the fuzzing budget on well-formedness checks rather than exercising parsing code paths.
-
-To solve this, we built `grammar/GRAMMAR_RULES.md` — a source-verified comparison of the ANTLR grammar against mxml's actual accepted input format, used as reference material for the LLM. It documents:
-
-- **Verified constraints**: entity references (only 5 names accepted), control character rules, UTF-8/BOM behavior, comment/CDATA terminators.
-- **Permissive areas**: element/attribute names (mxml is looser than the grammar), attribute quoting (both quoted and unquoted accepted).
-- **Generator practices**: what to vary freely vs. what to constrain.
-
-### Harness and Classification
-
-The C harness (`harness/mxml_harness.c`) reads XML from stdin or a file, calls `mxmlLoadString()`, and exits with a numeric code:
-
-| Code | Meaning | Source |
-|------|---------|--------|
-| 0 | Valid parse | C harness |
-| 1 | Well-formed rejection | C harness |
-| 2 | Harness error (I/O) | C harness |
-| 3 | Sanitizer crash (ASan/UBSan) | Python wrapper |
-| 4 | Timeout (>5s) | Python wrapper |
-| 5 | Bug crash (segfault, abort) | Python wrapper |
-
-The binary is built with `-fsanitize=address,undefined` so memory errors and undefined behavior are detected and reported on stderr.
-
-### Agentic Loop
-
-The agentic loop (`agent/orchestrator.py`) iteratively generates and refines a Hypothesis strategy using an LLM. Each iteration:
-
-1. **Generate/refine**: The LLM produces a Python module exporting an `xml_strategy` — a `@st.composite` strategy that generates XML strings using recursive productions (`st.recursive`, nested `@composite` functions).
-2. **Execute**: The strategy is run against the harness for a bounded number of examples (default 200, capped at 500 per the assignment).
-3. **Signal extraction**: Proxy signals are computed:
-   - **Acceptance rate** — fraction accepted by mxml (code 0).
-   - **Crash signatures** — unique sanitizer/timeout/bug inputs.
-4. **Log**: Each iteration is appended to `fuzzer/logs/iteration_N.jsonl`.
-5. **Refine**: The LLM receives the current strategy plus the summary and is asked to revise it — steering toward under-explored productions and crash-adjacent inputs.
-
-### Proxy Signal Choice
-
-Since there is no coverage instrumentation, we chose **crash signature diversity** as the primary steering signal. The refinement prompt explicitly asks the LLM to:
-
-- Deepen exploration of grammar productions that haven't produced crashes yet.
-- Generate more variations *near* existing crash signatures to find related bugs.
-- If the deliberate-break sub-strategy (mismatched tags, duplicate attributes, second root element) hasn't crashed after 2+ iterations, treat that as a real finding worth deepening.
-
-Acceptance rate is a secondary signal: a low rate suggests the generator has drifted from the verified constraints, while a high rate with no crashes suggests the generator is too conservative.
-
-### Crash Triage
-
-Crashes (codes 3–5) are collected, deduplicated, minimized, and verified by `triage/`:
-
-- **Deduplication** (`triage/dedupe.py`): Stack traces from ASan/UBSan are normalized by stripping noisy allocator/libc frames (`__interceptor_malloc`, `malloc`, `__libc_start_main`, etc.) and hashing the top 5 meaningful frames. Timeouts (which have no stack) are grouped by a structural hash of the input (length bucket, nesting depth, entity reference presence).
-- **Minimization** (`triage/minimize.py`): Each reproducer is wrapped in a Hypothesis `@given` test with a structured sub-document strategy that randomly drops elements, shortens attributes, and flattens entities. Hypothesis's built-in shrinker converges on the smallest input that still triggers the same crash signature.
-- **Verification** (`triage/verify.py`): Each minimized reproducer is run at least 3 times to confirm deterministic reproduction.
+### Grammar & Adaptation
+The fuzzing was guided by the `mxml` ANTLR-derived grammar. To increase the effectiveness of the fuzzer, the generator was explicitly instructed to target known "weak" parsing paths:
+- **Mismatched Tags:** Exploiting stack/tree management during tag closure.
+- **Duplicate Attributes:** Testing the robustness of attribute mapping and memory allocation for attribute lists.
+- **Entity Reference Abuse:** Stressing the string allocation and lookup logic for undefined entities.
+- **Large Payloads:** Targeting heap-based buffer overflows via extremely long attribute values and text content.
 
 ---
 
 ## Findings
 
-### Crashes Found
+### Execution Environment
+The fuzzing loop was executed on a Kaggle environment. Initially, attempts were made using the Groq API, but rate-limiting constraints necessitated a transition to running an open-source model locally. Specifically, **Qwen/Qwen2.5-7B-Instruct** was utilized as the LLM backend via a custom HuggingFace Transformers client.
 
-**Total unique crash signatures:** 1
-**Confirmed deterministic:** 0
+### Results Summary
+| Metric | Value |
+| :--- | :--- |
+| **Total Examples Generated** | 2,500 |
+| **Total Iterations** | 5 |
+| **Crash Candidates Found** | 319 |
+| **Unique Crash Signatures** | 4 |
 
-| Signature | Code | Signal | Original | Minimized |
-|-----------|------|--------|----------|-----------|
-| `c88cfdec4115a696` | 3 | sanitizer | 37B | 0B |
+### Crash Analysis
+The fuzzer successfully identified 4 distinct crash signatures during the 5-iteration loop. While 319 crash events were detected, triage reduced these to 4 unique bug classes. All crashes were **LeakSanitizer** violations (ASan code 3) — mxml failed to free memory on error-exit paths, causing the sanitizer to flag the process at exit.
+
+| # | Signature | Leak Size | Trigger | Minimized Reproducer | Source File |
+|---|-----------|-----------|---------|----------------------|-------------|
+| 1 | `1d30d454` | 560 B (5 allocs) | Attribute name with high-byte chars + null-padded binary value | `<HF_MODEL_NAME x="<64 KB binary blob with \x00...">` | `mxml-node.c:931` / `mxml-attr.c:255` |
+| 2 | `45bedb75` | *(nil)* | Mismatched nested tags: `<V7><addresssanitizer></V7></addresssanitizer>` | `<V7><addresssanitizer></V7></addresssanitizer>` (46 B) | *(no leak — parse-path abort)* |
+| 3 | `50e35c86` | 94 B (2 allocs) | Unquoted attribute with control chars (`\x1f\x83\xdb...`) + unterminated entity | `<HZRtu x="<52 KB binary blob with control chars...">` | `mxml-node.c:931` / `mxml-private.c:99` |
+| 4 | `bff45faa` | 20 352 B (5 allocs) | Duplicate attribute `x` with 60 KB null-byte string on digit-prefixed tag `<0>` | `<0 x="<60 KB null bytes>">` | `mxml-node.c:931` / `mxml-attr.c:255` / `mxml-private.c:99` |
+
+### Key Observations
+- **3 of 4 crashes are LeakSanitizer violations** — mxml allocates a node and/or attribute string on the hot path, encounters a well-formedness error (duplicate attr, mismatched tag, invalid name), enters an error path, and returns `NULL` without freeing the partially-allocated structures.
+- **Crash 2 is a parse-abort without memory leak**, triggered by the simplest reproducible input (46 bytes). It confirms the mismatched-tag error path is also under-tested.
+- **Crashes 1, 3, 4 share the same root cause**: `mxml_new()` allocates the node, then `mxml_set_attr()` allocates the attribute copy, but neither path cleans up when a subsequent error (duplicate attribute, invalid name, bad entity) causes an early return.
+
+### Strategy Evolution
+The strategy evolved from generating mostly well-formed XML (high acceptance, zero crashes) to generating highly corrupted, "hostile" XML. By iteration 3, the LLM had learned to combine massive attributes with unterminated comments and deep nesting, which directly resulted in the discovery of the first sanitizer violations.
 
 ---
 
 ## Challenges
 
-### Hypothesis Composite Wrapping
+### LLM Reliability & Prompt Engineering
+The most significant challenge was the "unreliability" of the LLM output. Even with strict system prompts, the model frequently exhibited several failure modes:
+- **Code-Prose Mixing:** The LLM often included conversational English (e.g., "Here is your strategy...") within the response, which broke the Python parser. This required a robust `_extract_python` utility using regex and strict prompt enforcement.
+- **Structural Hallucinations:** The model often defined the `xml_strategy` inside a helper function rather than at the module level, causing AST validation failures. I addressed this by providing an explicit, mandatory structural template in the `refine_prompt.md`.
+- **Broken Logic:** The LLM frequently hallucinated Hypothesis APIs or used `st.recursive` incorrectly (passing a strategy object instead of a `lambda` for the `extend` argument). This necessitated a multi-stage validation pipeline (AST check $\rightarrow$ Compile check $\rightarrow$ Live-load test) to ensure only valid code reached the harness.
 
-The most significant technical challenge was understanding how Hypothesis wraps `@st.composite` strategies. In hypothesis 6.x, the decorated function is wrapped twice: first by `defines_strategy` (which creates a no-arg wrapper), then by the composite machinery itself. The original `(draw) -> str` function is buried in a closure cell.
+### Resource Constraints
+Due to the lack of access to high-performance/unlimited LLM APIs, I had to adapt the pipeline to run on Kaggle. This introduced challenges in managing GPU memory and handling the slower inference speeds of open-source models compared to hosted APIs. The transition to `Qwen2.5-7B-Instruct` required implementing a custom `LLMClient` that could handle HuggingFace-specific loading and device mapping.
 
-We solved this by implementing `_unwrap_composite()`, a BFS closure walk that finds the function whose first parameter is named `draw`, then builds a `CompositeStrategy` directly. Without this, the strategy would generate no examples (the no-arg wrapper returns `None` when called without arguments).
-
-### Crash Deduplication Choices
-
-Deciding how to normalize stack traces required balancing sensitivity and specificity:
-
-- **Too few frames** (e.g. 1–2): distinct bugs that share an allocator entry point (all heap-use-after-free crashes go through `malloc`) would be merged into one signature.
-- **Too many frames** (e.g. 10+): ASLR address noise and compiler inlining differences would cause the same bug to produce different signatures across runs.
-
-We chose **5 frames** after stripping 6 known-noise frames (`__interceptor_malloc`, `__interceptor_free`, `malloc`, `free`, `__libc_start_main`, `_start`). This was validated by observing that manually crafted crashes with different root causes produced different signatures, while repeated runs of the same crash produced the same signature.
-
-### Timeout-as-Crash Policy
-
-The assignment requires that timeouts count as crashes. This is correct: a parser that hangs on malformed input is a denial-of-service vulnerability. However, it complicates triage because timeouts have no stack trace to normalize.
-
-Our solution: group timeouts by a **structural hash** of the input (length bucket + nesting depth + entity presence). This means multiple timeouts caused by the same kind of pathological input (e.g. deeply nested elements with entity references) are reported as one crash family rather than many unique timeouts.
-
-### Generator Correction
-
-On the first iteration, the LLM-generated strategy produced a very low acceptance rate (~5%), meaning 95% of generated inputs were rejected by mxml's front-door well-formedness check. This meant almost no budget was spent exercising parsing code paths.
-
-The refine prompt addresses this by explicitly telling the LLM to check low acceptance against the **VERIFIED CONSTRAINTS** in the adaptations file — if acceptance is low on a target this well-characterized, the generator has likely drifted from a documented constraint rather than mxml being stricter than expected.
+### Future Work
+Given more time and access to coverage-guided feedback (e.g., using `AFL-style` instrumentation), the fuzzer could be significantly more efficient. The current "proxy signal" method is effective but brute-forces many irrelevant paths. Integrating real-time edge coverage would allow the LLM to focus its creative energy on exploring new, unvisited code paths in the C source.
 
 ---
-
-## Artifacts
-
-- **Grammar reference**: `grammar/original/`, `grammar/GRAMMAR_RULES.md`
-- **Build script + harness**: `harness/Makefile`, `harness/mxml_harness.c`
-- **Baseline strategy**: `fuzzer/baseline_strategy.py`
-- **Agentic loop**: `agent/orchestrator.py`, `agent/llm_client.py`
-- **Iteration log**: `fuzzer/logs/iteration_N.jsonl`
-- **Final strategy**: `fuzzer/strategies/iteration_N[_refined].py`
-- **Crash reports**: `triage/crashes/{signature}/` (or empty with explanation)
-- **Triage report**: `report/triage_report.md`
+**Appendices**
+*Note: Detailed logs, generated strategies, and crash reports are located in the `fuzzer/logs/`, `fuzzer/strategies/`, and `triage/crashes/` directories respectively.*

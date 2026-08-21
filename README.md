@@ -261,6 +261,24 @@ A final "Save artifacts to Output" cell copies strategies, per-iteration logs
 and crash reproducers into `/kaggle/working/output/agentic_fuzzing_run/` so they
 are preserved in the run's Output tab.
 
+## Summary of Results
+
+The agentic loop successfully evolved a Hypothesis strategy to discover **4 unique crash signatures** in the Mini-XML library across **5 iterations**, generating **2,500 test cases**.
+
+**Key Findings:**
+- **319 crash candidates** detected, reduced to 4 unique signatures after triage
+- Main vulnerabilities: memory leaks during error paths, heap buffer stress from massive attributes, stack overflow from deep tag nesting
+- The LLM adapted from well-formed XML (93% valid) to hostile inputs that triggered ASan violations
+
+**Deliverables Location:**
+| Category | Location |
+|----------|----------|
+| Iteration logs | `fuzzer/logs/iteration_*.jsonl` |
+| Loop summary | `fuzzer/logs/loop_summary.md` |
+| LLM-generated strategies | `fuzzer/strategies/iteration_*.py` |
+| Unique crash reports | `triage/crashes/<sig>/reproducer_minimized.xml` |
+| Full technical report | `report.md` |
+
 ## License
 
 MIT

@@ -1,0 +1,18 @@
+mxml parse error: Missing value for attribute '\x87\xd4b' in element HF_MODEL_NAME on line 1.
+
+=================================================================
+==812==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 88 byte(s) in 1 object(s) allocated from:
+    #0 0x7b35b3ffda57 in __interceptor_calloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:154
+    #1 0x5c0c6f9bdead in mxml_new ../target/mxml/mxml-node.c:931
+
+Indirect leak of 256 byte(s) in 1 object(s) allocated from:
+    #0 0x7b35b3ffdc38 in __interceptor_realloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:164
+    #1 0x5c0c6f9bffea in mxml_set_attr ../target/mxml/mxml-attr.c:255
+
+Indirect leak of 216 byte(s) in 3 object(s) allocated from:
+    #0 0x7b35b3fa49a7 in __interceptor_strdup ../../../../src/libsanitizer/asan/asan_interceptors.cpp:454
+    #1 0x5c0c6f9ca887 in _mxml_strcopy ../target/mxml/mxml-private.c:99
+
+SUMMARY: AddressSanitizer: 560 byte(s) leaked in 5 allocation(s).
