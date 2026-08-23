@@ -266,7 +266,7 @@ are preserved in the run's Output tab.
 The agentic loop successfully evolved a Hypothesis strategy to discover **4 unique crash signatures** in the Mini-XML library across **5 iterations**, generating **2,500 test cases**.
 
 **Key Findings:**
-- **319 crash candidates** detected, reduced to 4 unique signatures after triage
+- **1,164 crash candidates** detected, reduced to 4 unique signatures after triage
 - Main vulnerabilities: memory leaks during error paths, heap buffer stress from massive attributes, stack overflow from deep tag nesting
 - The LLM adapted from well-formed XML (93% valid) to hostile inputs that triggered ASan violations
 
@@ -277,7 +277,7 @@ The agentic loop successfully evolved a Hypothesis strategy to discover **4 uniq
 | Loop summary | `fuzzer/logs/loop_summary.md` |
 | LLM-generated strategies | `fuzzer/strategies/iteration_*.py` |
 | Unique crash reports | `triage/crashes/<sig>/reproducer_minimized.xml` |
-| Full technical report | `report.md` |
+| Full technical report | `report/report.md` |
 
 ## License
 

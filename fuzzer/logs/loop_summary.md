@@ -6,11 +6,11 @@
 
 **LLM provider:** local-llm
 
-**Wall-clock:** 340.9s
+**Wall-clock:** 242.4s
 
 **Total examples:** 2500
 
-**Crashes found:** 319
+**Crashes found:** 1164
 
 ## Strategy Files
 

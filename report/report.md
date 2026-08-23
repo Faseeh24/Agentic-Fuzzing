@@ -31,18 +31,18 @@ The fuzzing was guided by the `mxml` ANTLR-derived grammar. To increase the effe
 ## Findings
 
 ### Execution Environment
-The fuzzing loop was executed on a Kaggle environment. Initially, attempts were made using the Groq API, but rate-limiting constraints necessitated a transition to running an open-source model locally. Specifically, **Qwen/Qwen2.5-7B-Instruct** was utilized as the LLM backend via a custom HuggingFace Transformers client.
+The fuzzing loop was executed on a Kaggle environment. Initially, attempts were made using the Groq API, but rate-limiting constraints necessitated a transition to running an open-source model locally. Specifically, **Microsoft/phi-3.5-mini-instruct** (loaded from a Kaggle input) was utilized as the LLM backend via a custom HuggingFace Transformers client.
 
 ### Results Summary
 | Metric | Value |
 | :--- | :--- |
 | **Total Examples Generated** | 2,500 |
 | **Total Iterations** | 5 |
-| **Crash Candidates Found** | 319 |
+| **Crash Candidates Found** | 1,164 |
 | **Unique Crash Signatures** | 4 |
 
 ### Crash Analysis
-The fuzzer successfully identified 4 distinct crash signatures during the 5-iteration loop. While 319 crash events were detected, triage reduced these to 4 unique bug classes. All crashes were **LeakSanitizer** violations (ASan code 3) — mxml failed to free memory on error-exit paths, causing the sanitizer to flag the process at exit.
+The fuzzer successfully identified 4 distinct crash signatures during the 5-iteration loop. While 1,164 crash events were detected, triage reduced these to 4 unique bug classes. All crashes were **LeakSanitizer** violations (ASan code 3) — mxml failed to free memory on error-exit paths, causing the sanitizer to flag the process at exit.
 
 | # | Signature | Leak Size | Trigger | Minimized Reproducer | Source File |
 |---|-----------|-----------|---------|----------------------|-------------|
@@ -70,7 +70,7 @@ The most significant challenge was the "unreliability" of the LLM output. Even w
 - **Broken Logic:** The LLM frequently hallucinated Hypothesis APIs or used `st.recursive` incorrectly (passing a strategy object instead of a `lambda` for the `extend` argument). This necessitated a multi-stage validation pipeline (AST check $\rightarrow$ Compile check $\rightarrow$ Live-load test) to ensure only valid code reached the harness.
 
 ### Resource Constraints
-Due to the lack of access to high-performance/unlimited LLM APIs, I had to adapt the pipeline to run on Kaggle. This introduced challenges in managing GPU memory and handling the slower inference speeds of open-source models compared to hosted APIs. The transition to `Qwen2.5-7B-Instruct` required implementing a custom `LLMClient` that could handle HuggingFace-specific loading and device mapping.
+Due to the lack of access to high-performance/unlimited LLM APIs, I had to adapt the pipeline to run on Kaggle. This introduced challenges in managing GPU memory and handling the slower inference speeds of open-source models compared to hosted APIs. The transition to `Microsoft/phi-3.5-mini-instruct` required implementing a custom `LLMClient` that could handle HuggingFace-specific loading and device mapping.
 
 ### Future Work
 Given more time and access to coverage-guided feedback (e.g., using `AFL-style` instrumentation), the fuzzer could be significantly more efficient. The current "proxy signal" method is effective but brute-forces many irrelevant paths. Integrating real-time edge coverage would allow the LLM to focus its creative energy on exploring new, unvisited code paths in the C source.
